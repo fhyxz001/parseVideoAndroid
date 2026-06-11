@@ -12,8 +12,22 @@ android {
         applicationId = "com.videoparser.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 101
-        versionName = "1.0.1"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 101
+        versionName = System.getenv("VERSION_NAME") ?: "1.0.1"
+    }
+
+    signingConfigs {
+        // Release signing is driven entirely by environment variables injected by CI.
+        // Locally the release buildType falls back to the debug signing config.
+        val keystorePath = System.getenv("KEYSTORE_PATH")
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("KEY_ALIAS") ?: ""
+                keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +37,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = if (System.getenv("KEYSTORE_PATH") != null)
+                signingConfigs.getByName("release")
+            else
+                signingConfigs.getByName("debug")
         }
     }
 
