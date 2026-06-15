@@ -46,5 +46,16 @@
 </script>
 
 <style>
-	/*每个页面公共css */
+	/* 全局 iOS 风格基础样式 */
+	page {
+		background-color: #f2f2f7;
+		font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+		-webkit-font-smoothing: antialiased;
+		color: rgba(60, 60, 67, 0.9);
+	}
+
+	/* iOS 风格滚动条 */
+	::-webkit-scrollbar {
+		display: none;
+	}
 </style>
