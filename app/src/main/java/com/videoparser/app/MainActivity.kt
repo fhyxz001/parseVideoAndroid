@@ -641,35 +641,13 @@ fun ActionGrid(
         )
     )
 
-    // Responsive: 2 columns on phones, 4 columns on tablets
-    val config = LocalConfiguration.current
-    val isWide = config.screenWidthDp >= 600
-
-    if (isWide) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            actions.forEach { action ->
-                Box(modifier = Modifier.weight(1f)) {
-                    ActionCell(action)
-                }
-            }
-        }
-    } else {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            actions.chunked(2).forEach { pair ->
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    pair.forEach { action ->
-                        ActionCell(action)
-                    }
-                }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        actions.forEach { action ->
+            Box(modifier = Modifier.weight(1f)) {
+                ActionCell(action)
             }
         }
     }
@@ -719,13 +697,13 @@ private fun ActionCell(item: ActionItem) {
                 else Modifier
             )
             .then(if (item.disabled) Modifier.graphicsLayer { alpha = 0.45f } else Modifier)
-            .padding(vertical = 22.dp),
+            .padding(vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(item.gradient),
                 contentAlignment = Alignment.Center
@@ -733,13 +711,13 @@ private fun ActionCell(item: ActionItem) {
                 Image(
                     painter = painterResource(item.iconRes),
                     contentDescription = item.label,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
                 item.label,
-                fontSize = 12.sp,
+                fontSize = 10.sp,
                 color = iOSSecondary,
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 0.1.sp
