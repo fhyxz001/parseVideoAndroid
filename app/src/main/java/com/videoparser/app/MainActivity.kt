@@ -21,19 +21,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.*
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -75,28 +77,88 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/* ─────────────────────────────────── Colors ─────────────────────────────── */
+/* ═══════════════════════ iOS Design System - Colors ═══════════════════════ */
 
+// Primary - iOS System Blue
+private val iOSBlue       = Color(0xFF007AFF)
+private val iOSBlueLight  = Color(0xFF5AC8FA)
+private val iOSBlueDark   = Color(0xFF0055CC)
+
+// Semantic
+private val iOSGreen      = Color(0xFF34C759)
+private val iOSGreenLight = Color(0xFF30D158)
+private val iOSOrange     = Color(0xFFFF9500)
+private val iOSRed        = Color(0xFFFF3B30)
+private val iOSTeal       = Color(0xFF5AC8FA)
+private val iOSPurple     = Color(0xFFAF52DE)
+
+// Neutrals
+private val iOSBgBase     = Color(0xFFF2F2F7)
+private val iOSCardBg     = Color(0xFFFFFFFF)
+private val iOSLabel      = Color(0xFF1C1C1E)
+private val iOSSecondary  = Color(0xFF3C3C43).copy(alpha = 0.6f)
+private val iOSTertiary   = Color(0xFF3C3C43).copy(alpha = 0.3f)
+private val iOSPlaceholder = Color(0xFF3C3C43).copy(alpha = 0.3f)
+private val iOSSeparator  = Color(0xFF3C3C43).copy(alpha = 0.15f)
+
+// Glass
+private val GlassWhite    = Color(0xFFFFFFFF).copy(alpha = 0.78f)
+private val GlassBorder   = Color(0xFFFFFFFF).copy(alpha = 0.55f)
+private val GlassShadow   = Color(0xFF000000).copy(alpha = 0.04f)
+
+// Gradients
 private val BgGradient = Brush.verticalGradient(
-    listOf(Color(0xFFF0F4FF), Color(0xFFE8EEFF), Color(0xFFF3EEFF), Color(0xFFFEF0F5))
+    listOf(
+        Color(0xFFF9F9FC),
+        Color(0xFFF2F2F7),
+        Color(0xFFEDEDF5),
+        Color(0xFFF5F5FA)
+    )
 )
-private val PurpleStart = Color(0xFF667EEA)
-private val PurpleEnd   = Color(0xFF764BA2)
-private val ParseGradient = Brush.horizontalGradient(listOf(PurpleStart, PurpleEnd))
-private val ParseDisabledGradient = Brush.horizontalGradient(
-    listOf(Color(0xFFC5CDF0), Color(0xFFD0C5E0))
+private val AccentGradient = Brush.horizontalGradient(
+    listOf(iOSBlue, Color(0xFF5856D6))
 )
-private val GreenStart  = Color(0xFF43E97B)
-private val GreenEnd    = Color(0xFF38F9D7)
-private val PinkStart   = Color(0xFFFA709A)
-private val YellowEnd   = Color(0xFFFEE140)
-private val BlueStart   = Color(0xFF4FACFE)
-private val BlueEnd     = Color(0xFF00F2FE)
+private val AccentGradientDisabled = Brush.horizontalGradient(
+    listOf(Color(0xFFB0C4DE), Color(0xFFC5B8E0))
+)
+private val GreenGradient = Brush.linearGradient(
+    listOf(iOSGreen, iOSGreenLight)
+)
+private val TealGradient  = Brush.linearGradient(
+    listOf(iOSTeal, iOSBlue)
+)
+private val OrangeGradient = Brush.linearGradient(
+    listOf(iOSOrange, Color(0xFFFF648E))
+)
+private val PurpleGradient = Brush.linearGradient(
+    listOf(iOSPurple, Color(0xFF5856D6))
+)
 
-/* ───────────────────────────────── Screen ───────────────────────────────── */
+/* ═══════════════════════ Responsive Helpers ═══════════════════════════════ */
+
+@Composable
+private fun responsivePadding(): Dp {
+    val config = LocalConfiguration.current
+    val widthDp = config.screenWidthDp
+    return when {
+        widthDp >= 600 -> 48.dp
+        widthDp >= 400 -> 24.dp
+        else -> 16.dp
+    }
+}
+
+@Composable
+private fun cardMaxWidth(): Dp {
+    val config = LocalConfiguration.current
+    return if (config.screenWidthDp >= 600) 560.dp else Dp.Unspecified
+}
+
+/* ═════════════════════════ Screen ═════════════════════════════════════════ */
 
 @Composable
 fun VideoParserScreen(vm: MainViewModel) {
+    val pad = responsivePadding()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -108,10 +170,21 @@ fun VideoParserScreen(vm: MainViewModel) {
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 16.dp),
+                .padding(horizontal = pad, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+
+            // ── Header ──
+            Text(
+                text = "视频解析助手",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = iOSLabel,
+                textAlign = TextAlign.Center,
+                letterSpacing = (-0.5).sp
+            )
+            Spacer(Modifier.height(20.dp))
 
             // Input card
             InputCard(
@@ -152,52 +225,148 @@ fun VideoParserScreen(vm: MainViewModel) {
             } else {
                 EmptyState()
             }
+
+            Spacer(Modifier.height(32.dp))
         }
 
         // Global loading overlay
-        if (vm.isParsing) {
+        AnimatedVisibility(
+            visible = vm.isParsing,
+            enter = fadeIn(spring()),
+            exit = fadeOut(spring())
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(iOSLabel.copy(alpha = 0.35f))
                     .clickable(enabled = false) {},
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = Color.White)
-                    Spacer(Modifier.height(12.dp))
-                    Text("解析中...", color = Color.White, fontSize = 15.sp)
+                GlassCardCompact {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(40.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = iOSBlue,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            "解析中...",
+                            color = iOSLabel,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/* ───────────────────────────────── Input card ───────────────────────────── */
+/* ═════════════════════════ Glass Cards ════════════════════════════════════ */
+
+@Composable
+fun GlassCard(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = cardMaxWidth())
+            .clip(RoundedCornerShape(24.dp))
+            .background(GlassWhite)
+            .border(0.5.dp, GlassBorder, RoundedCornerShape(24.dp))
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(24.dp),
+                ambientColor = GlassShadow,
+                spotColor = GlassShadow
+            )
+            .padding(20.dp)
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun GlassCardCompact(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(GlassWhite)
+            .border(0.5.dp, GlassBorder, RoundedCornerShape(20.dp))
+            .shadow(
+                elevation = 12.dp,
+                shape = RoundedCornerShape(20.dp),
+                ambientColor = Color.Black.copy(alpha = 0.06f),
+                spotColor = Color.Black.copy(alpha = 0.08f)
+            )
+    ) {
+        content()
+    }
+}
+
+/* ════════════════════════ Input Card ══════════════════════════════════════ */
 
 @Composable
 fun InputCard(videoUrl: String, onUrlChanged: (String) -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val borderColor by animateColorAsState(
-        if (focused) PurpleStart else Color.Transparent,
+        if (focused) iOSBlue else iOSSeparator,
+        animationSpec = tween(250),
         label = "border"
     )
+    val elevation by animateDpAsState(
+        if (focused) 6.dp else 2.dp,
+        animationSpec = tween(250),
+        label = "elevation"
+    )
     val bgColor by animateColorAsState(
-        if (focused) Color.White else Color(0xFFF5F6FA),
+        if (focused) iOSCardBg else Color(0xFFF8F8FC),
+        animationSpec = tween(250),
         label = "bg"
     )
 
-    GlassCard {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = cardMaxWidth())
+            .clip(RoundedCornerShape(20.dp))
+            .background(bgColor)
+            .border(1.5.dp, borderColor, RoundedCornerShape(20.dp))
+            .shadow(
+                elevation = elevation,
+                shape = RoundedCornerShape(20.dp),
+                ambientColor = GlassShadow,
+                spotColor = GlassShadow
+            )
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(bgColor)
-                .border(2.dp, borderColor, RoundedCornerShape(14.dp))
-                .padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("🔗", fontSize = 18.sp, modifier = Modifier.padding(end = 10.dp))
+            // Icon with subtle background
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (focused)
+                            Brush.linearGradient(listOf(iOSBlue, iOSBlueLight))
+                        else
+                            Brush.linearGradient(listOf(Color(0xFFE8E8ED), Color(0xFFE0E0E8)))
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "🔗",
+                    fontSize = 16.sp
+                )
+            }
+
+            Spacer(Modifier.width(14.dp))
+
             BasicTextField(
                 value = videoUrl,
                 onValueChange = onUrlChanged,
@@ -205,23 +374,53 @@ fun InputCard(videoUrl: String, onUrlChanged: (String) -> Unit) {
                     .weight(1f)
                     .height(56.dp)
                     .onFocusChanged { focused = it.isFocused },
-                textStyle = TextStyle(color = Color(0xFF333333), fontSize = 15.sp),
-                cursorBrush = SolidColor(PurpleStart),
+                textStyle = TextStyle(
+                    color = iOSLabel,
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp
+                ),
+                cursorBrush = SolidColor(iOSBlue),
                 singleLine = true,
                 decorationBox = { inner ->
-                    Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        contentAlignment = Alignment.CenterStart,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
                         if (videoUrl.isEmpty()) {
-                            Text("请输入或粘贴视频链接", color = Color(0xFFC0C4CC), fontSize = 15.sp)
+                            Text(
+                                "粘贴视频链接",
+                                color = iOSPlaceholder,
+                                fontSize = 15.sp
+                            )
                         }
                         inner()
                     }
                 }
             )
+
+            // Clear button
+            if (videoUrl.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(iOSTertiary.copy(alpha = 0.18f))
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = { onUrlChanged("") }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("✕", fontSize = 11.sp, color = iOSSecondary)
+                }
+            }
         }
     }
 }
 
-/* ───────────────────────────────── Buttons ──────────────────────────────── */
+/* ══════════════════════════ Button Row ════════════════════════════════════ */
 
 @Composable
 fun ButtonRow(
@@ -232,36 +431,49 @@ fun ButtonRow(
 ) {
     val context = LocalContext.current
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = cardMaxWidth()),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Paste button
         PressButton(
             modifier = Modifier.weight(1f),
             onClick = { onPaste(context) },
-            background = Brush.horizontalGradient(listOf(Color(0xFFF8F9FD), Color(0xFFEEF0F7))),
-            shadowColor = Color.Black.copy(alpha = 0.05f)
+            background = Color(0xFFF2F2F7),
+            shadowColor = Color.Black.copy(alpha = 0.04f),
+            contentColor = iOSLabel
         ) {
-            Text("粘贴链接", color = Color(0xFF555555), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "粘贴",
+                color = iOSLabel,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
         }
+
+        // Parse button
         val enabled = hasUrl && !isParsing
         PressButton(
             modifier = Modifier.weight(1f),
             onClick = { if (enabled) onParse() },
-            background = if (enabled) ParseGradient else ParseDisabledGradient,
-            shadowColor = PurpleStart.copy(alpha = if (enabled) 0.35f else 0f)
+            background = if (enabled) iOSBlue else Color(0xFFB0C4DE),
+            shadowColor = if (enabled) iOSBlue.copy(alpha = 0.3f) else Color.Transparent,
+            contentColor = Color.White,
+            enabled = enabled
         ) {
             Text(
-                if (isParsing) "解析中..." else "开始解析",
+                if (isParsing) "解析中..." else "解析",
                 color = Color.White.copy(alpha = if (enabled) 1f else 0.7f),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                letterSpacing = 1.sp
+                letterSpacing = 0.25.sp
             )
         }
     }
 }
 
-/* ────────────────────────────── Result section ──────────────────────────── */
+/* ════════════════════════ Result Section ══════════════════════════════════ */
 
 @Composable
 fun ResultSection(
@@ -274,7 +486,7 @@ fun ResultSection(
     onCopyShortLink: () -> Unit,
     onShare: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().widthIn(max = cardMaxWidth())) {
         // Video card
         VideoCard(data)
         Spacer(Modifier.height(16.dp))
@@ -290,9 +502,15 @@ fun ResultSection(
         )
 
         // Progress bar
-        if (isDownloading) {
-            Spacer(Modifier.height(16.dp))
-            ProgressSection(downloadPercent)
+        AnimatedVisibility(
+            visible = isDownloading,
+            enter = expandVertically(spring()) + fadeIn(),
+            exit = shrinkVertically(spring()) + fadeOut()
+        ) {
+            Column {
+                Spacer(Modifier.height(16.dp))
+                ProgressSection(downloadPercent)
+            }
         }
     }
 }
@@ -300,68 +518,84 @@ fun ResultSection(
 @Composable
 fun VideoCard(data: VideoData) {
     GlassCard {
-        Box {
-            Column {
-                if (data.coverUrl.isNotBlank()) {
+        Column {
+            // Cover image with overlay
+            if (data.coverUrl.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                ) {
                     AsyncImage(
                         model = data.coverUrl,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    // Bottom gradient overlay for better text readability
+                    Box(
                         modifier = Modifier
+                            .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(200.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                    )
-                    Spacer(Modifier.height(14.dp))
-                }
-                if (data.title.isNotBlank()) {
-                    Text(
-                        text = data.title,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
-                        color = Color(0xFF1A1A2E),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 22.sp
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-                data.author?.let { author ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(listOf(PurpleStart, PurpleEnd))),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = author.name.first().toString(),
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                            .height(60.dp)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f))
+                                )
                             )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text("@${author.name}", color = Color(0xFF999999), fontSize = 13.sp)
-                    }
+                    )
                 }
+                Spacer(Modifier.height(16.dp))
             }
-            // Success tag
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Brush.linearGradient(listOf(GreenStart, GreenEnd)))
-                    .padding(horizontal = 12.dp, vertical = 5.dp)
-            ) {
-                Text("✓ 解析成功", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+
+            if (data.title.isNotBlank()) {
+                Text(
+                    text = data.title,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp,
+                    color = iOSLabel,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 22.sp,
+                    letterSpacing = (-0.25).sp
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+
+            data.author?.let { author ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Avatar
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(listOf(iOSBlue, iOSPurple))
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = author.name.first().toString(),
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "@${author.name}",
+                        color = iOSSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }
 }
 
-/* ─────────────────────────────── Action grid ────────────────────────────── */
+/* ═════════════════════════ Action Grid ════════════════════════════════════ */
 
 @Composable
 fun ActionGrid(
@@ -374,50 +608,67 @@ fun ActionGrid(
 ) {
     val actions = listOf(
         ActionItem(
-            label = if (isDownloading) "下载中" else "下载",
+            label = if (isDownloading) "下载中" else "下载视频",
             iconRes = R.drawable.ic_action_1,
-            gradient = Brush.linearGradient(listOf(GreenStart, GreenEnd)),
-            shadowColor = GreenStart.copy(0.3f),
+            gradient = GreenGradient,
+            shadowColor = iOSGreen.copy(alpha = 0.12f),
             disabled = isDownloading,
             onClick = onDownload
         ),
         ActionItem(
-            label = "复制长链",
+            label = "复制链接",
             iconRes = R.drawable.ic_action_2,
-            gradient = Brush.linearGradient(listOf(PurpleStart, PurpleEnd)),
-            shadowColor = PurpleStart.copy(0.3f),
+            gradient = AccentGradient,
+            shadowColor = iOSBlue.copy(alpha = 0.12f),
             disabled = false,
             onClick = onCopyLongLink
         ),
         ActionItem(
-            label = if (isGettingShortLink) "获取中" else "复制短链",
+            label = if (isGettingShortLink) "获取中" else "短链接",
             iconRes = R.drawable.ic_action_3,
-            gradient = Brush.linearGradient(listOf(PinkStart, YellowEnd)),
-            shadowColor = PinkStart.copy(0.3f),
+            gradient = OrangeGradient,
+            shadowColor = iOSOrange.copy(alpha = 0.12f),
             disabled = isGettingShortLink,
             onClick = onCopyShortLink
         ),
         ActionItem(
             label = "分享",
             iconRes = R.drawable.ic_action_4,
-            gradient = Brush.linearGradient(listOf(BlueStart, BlueEnd)),
-            shadowColor = BlueStart.copy(0.3f),
+            gradient = PurpleGradient,
+            shadowColor = iOSPurple.copy(alpha = 0.12f),
             disabled = false,
             onClick = onShare
         )
     )
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        actions.chunked(2).forEach { pair ->
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                pair.forEach { action ->
+    // Responsive: 2 columns on phones, 4 columns on tablets
+    val config = LocalConfiguration.current
+    val isWide = config.screenWidthDp >= 600
+
+    if (isWide) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            actions.forEach { action ->
+                Box(modifier = Modifier.weight(1f)) {
                     ActionCell(action)
+                }
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            actions.chunked(2).forEach { pair ->
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    pair.forEach { action ->
+                        ActionCell(action)
+                    }
                 }
             }
         }
@@ -436,32 +687,45 @@ private data class ActionItem(
 @Composable
 private fun ActionCell(item: ActionItem) {
     var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "scale")
+    val scale by animateFloatAsState(
+        if (pressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "scale"
+    )
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .scale(scale)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.82f))
-            .border(1.dp, Color.White.copy(0.5f), RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .background(GlassWhite)
+            .border(0.5.dp, GlassBorder, RoundedCornerShape(20.dp))
+            .shadow(
+                elevation = 4.dp,
+                shape = RoundedCornerShape(20.dp),
+                ambientColor = item.shadowColor,
+                spotColor = item.shadowColor
+            )
             .then(
                 if (!item.disabled)
                     Modifier.clickable(
                         interactionSource = null,
                         indication = null,
-                        onClick = item.onClick
+                        onClick = {
+                            pressed = true
+                            item.onClick()
+                        }
                     )
                 else Modifier
             )
             .then(if (item.disabled) Modifier.graphicsLayer { alpha = 0.45f } else Modifier)
-            .padding(vertical = 20.dp),
+            .padding(vertical = 22.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(item.gradient),
                 contentAlignment = Alignment.Center
@@ -472,144 +736,208 @@ private fun ActionCell(item: ActionItem) {
                     modifier = Modifier.size(24.dp)
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(item.label, fontSize = 12.sp, color = Color(0xFF555555), fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                item.label,
+                fontSize = 12.sp,
+                color = iOSSecondary,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.1.sp
+            )
+        }
+    }
+
+    // Reset pressed state
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            kotlinx.coroutines.delay(150)
+            pressed = false
         }
     }
 }
 
-/* ──────────────────────────────── Progress ─────────────────────────────── */
+/* ═════════════════════════ Progress ═══════════════════════════════════════ */
 
 @Composable
 fun ProgressSection(percent: Int) {
     GlassCard {
         Column {
-            Text(
-                "正在下载视频...",
-                color = PurpleStart,
-                fontWeight = FontWeight.Medium,
-                fontSize = 13.sp
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(11.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFFEEF0F5))
-                ) {
-                    val animatedPercent by animateFloatAsState(
-                        percent / 100f, animationSpec = tween(300), label = "prog"
-                    )
-                    val shimmer = rememberInfiniteTransition(label = "shimmer")
-                    val offset by shimmer.animateFloat(
-                        0f, 1f,
-                        infiniteRepeatable(tween(1500, easing = LinearEasing)),
-                        label = "offset"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(animatedPercent)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(PurpleStart, PurpleEnd, PurpleStart),
-                                    startX = offset * 300f,
-                                    endX = offset * 300f + 300f
-                                )
-                            )
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "正在下载视频...",
+                    color = iOSLabel,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    letterSpacing = (-0.2).sp
+                )
                 Text(
                     "$percent%",
-                    color = PurpleEnd,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    modifier = Modifier.widthIn(min = 40.dp)
+                    color = iOSBlue,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // Track
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFFE5E5EA))
+            ) {
+                val animatedPercent by animateFloatAsState(
+                    percent / 100f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy),
+                    label = "prog"
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(animatedPercent)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(iOSBlue, iOSBlueLight)
+                            )
+                        )
                 )
             }
         }
     }
 }
 
-/* ──────────────────────────────── Empty state ───────────────────────────── */
+/* ══════════════════════════ Empty State ═══════════════════════════════════ */
 
 @Composable
 fun EmptyState() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 60.dp),
+            .widthIn(max = cardMaxWidth())
+            .padding(top = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Decorative ring + icon
         Box(
-            modifier = Modifier
-                .size(110.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(listOf(Color(0xFFF0F4FF), Color(0xFFF3EEFF)))
-                ),
+            modifier = Modifier.size(120.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text("🎬", fontSize = 48.sp)
+            // Outer decorative ring
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                Color(0xFFF0F0F8).copy(alpha = 0.6f),
+                                Color(0xFFE8E8F5).copy(alpha = 0.6f)
+                            )
+                        )
+                    )
+                    .border(
+                        1.5.dp,
+                        Brush.linearGradient(
+                            listOf(iOSBlue.copy(alpha = 0.15f), iOSPurple.copy(alpha = 0.15f))
+                        ),
+                        CircleShape
+                    )
+            )
+            // Inner icon
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(iOSBlue.copy(alpha = 0.12f), iOSPurple.copy(alpha = 0.12f))
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🎬", fontSize = 32.sp)
+            }
         }
-        Spacer(Modifier.height(22.dp))
+
+        Spacer(Modifier.height(24.dp))
+
         Text(
             "粘贴短视频链接",
             fontWeight = FontWeight.SemiBold,
-            fontSize = 17.sp,
-            color = Color(0xFF333333)
+            fontSize = 18.sp,
+            color = iOSLabel,
+            letterSpacing = (-0.3).sp
         )
         Spacer(Modifier.height(8.dp))
-        Text("一键解析无水印视频", fontSize = 13.sp, color = Color(0xFFBBBBBB))
+        Text(
+            "一键解析无水印视频",
+            fontSize = 14.sp,
+            color = iOSSecondary,
+            letterSpacing = (-0.1).sp
+        )
     }
 }
 
-/* ─────────────────────────────── GlassCard ─────────────────────────────── */
-
-@Composable
-fun GlassCard(content: @Composable () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.White.copy(alpha = 0.82f))
-            .border(1.dp, Color.White.copy(0.6f), RoundedCornerShape(20.dp))
-            .padding(20.dp)
-    ) {
-        content()
-    }
-}
-
-/* ─────────────────────────────── PressButton ───────────────────────────── */
+/* ═════════════════════════ PressButton ════════════════════════════════════ */
 
 @Composable
 fun PressButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    background: Brush,
+    background: Color,
     shadowColor: Color,
+    contentColor: Color,
+    enabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
     var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, label = "scale")
+    val scale by animateFloatAsState(
+        if (pressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "scale"
+    )
 
     Box(
         modifier = modifier
-            .height(56.dp)
+            .height(54.dp)
             .scale(scale)
             .clip(RoundedCornerShape(16.dp))
             .background(background)
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onClick
+            .shadow(
+                elevation = if (enabled) 6.dp else 0.dp,
+                shape = RoundedCornerShape(16.dp),
+                ambientColor = shadowColor,
+                spotColor = shadowColor
+            )
+            .then(
+                if (enabled && onClick != {})
+                    Modifier.clickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = {
+                            pressed = true
+                            onClick()
+                        }
+                    )
+                else Modifier
             ),
         contentAlignment = Alignment.Center
     ) {
         content()
+    }
+
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            kotlinx.coroutines.delay(150)
+            pressed = false
+        }
     }
 }
