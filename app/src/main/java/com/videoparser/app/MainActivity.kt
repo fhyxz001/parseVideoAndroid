@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -197,14 +199,15 @@ fun VideoParserScreen(vm: MainViewModel) {
             // Button row
             ButtonRow(
                 isParsing = vm.isParsing,
-                hasUrl = vm.videoUrl.isNotBlank(),
-                onPaste = {
+                onPasteAndParse = {
                     val ctx = it
                     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     val text = cm.primaryClip?.getItemAt(0)?.text?.toString()
                     vm.onPasted(text)
-                },
-                onParse = vm::parse
+                    if (vm.videoUrl.isNotBlank()) {
+                        vm.parse()
+                    }
+                }
             )
 
             Spacer(Modifier.height(24.dp))
@@ -217,6 +220,12 @@ fun VideoParserScreen(vm: MainViewModel) {
                     isDownloading = vm.isDownloading,
                     downloadPercent = vm.downloadPercent,
                     isGettingShortLink = vm.isGettingShortLink,
+                    showCoverSaveDialog = vm.showCoverSaveDialog,
+                    onCoverClicked = vm::onCoverClicked,
+                    onTitleClicked = vm::copyTitle,
+                    onAuthorClicked = vm::copyAuthorName,
+                    onConfirmSaveCover = vm::confirmSaveCover,
+                    onDismissCoverDialog = vm::dismissCoverSaveDialog,
                     onDownload = vm::download,
                     onCopyLongLink = vm::copyLongLink,
                     onCopyShortLink = vm::copyShortLink,
@@ -346,27 +355,6 @@ fun InputCard(videoUrl: String, onUrlChanged: (String) -> Unit) {
         Row(
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon with subtle background
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (focused)
-                            Brush.linearGradient(listOf(iOSBlue, iOSBlueLight))
-                        else
-                            Brush.linearGradient(listOf(Color(0xFFE8E8ED), Color(0xFFE0E0E8)))
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "🔗",
-                    fontSize = 16.sp
-                )
-            }
-
-            Spacer(Modifier.width(14.dp))
-
             BasicTextField(
                 value = videoUrl,
                 onValueChange = onUrlChanged,
@@ -425,51 +413,27 @@ fun InputCard(videoUrl: String, onUrlChanged: (String) -> Unit) {
 @Composable
 fun ButtonRow(
     isParsing: Boolean,
-    hasUrl: Boolean,
-    onPaste: (Context) -> Unit,
-    onParse: () -> Unit
+    onPasteAndParse: (Context) -> Unit
 ) {
     val context = LocalContext.current
-    Row(
+    val enabled = !isParsing
+    PressButton(
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = cardMaxWidth()),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        onClick = { if (enabled) onPasteAndParse(context) },
+        background = if (enabled) iOSBlue else Color(0xFFB0C4DE),
+        shadowColor = if (enabled) iOSBlue.copy(alpha = 0.3f) else Color.Transparent,
+        contentColor = Color.White,
+        enabled = enabled
     ) {
-        // Paste button
-        PressButton(
-            modifier = Modifier.weight(1f),
-            onClick = { onPaste(context) },
-            background = Color(0xFFF2F2F7),
-            shadowColor = Color.Black.copy(alpha = 0.04f),
-            contentColor = iOSLabel
-        ) {
-            Text(
-                "粘贴",
-                color = iOSLabel,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium
-            )
-        }
-
-        // Parse button
-        val enabled = hasUrl && !isParsing
-        PressButton(
-            modifier = Modifier.weight(1f),
-            onClick = { if (enabled) onParse() },
-            background = if (enabled) iOSBlue else Color(0xFFB0C4DE),
-            shadowColor = if (enabled) iOSBlue.copy(alpha = 0.3f) else Color.Transparent,
-            contentColor = Color.White,
-            enabled = enabled
-        ) {
-            Text(
-                if (isParsing) "解析中..." else "解析",
-                color = Color.White.copy(alpha = if (enabled) 1f else 0.7f),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.25.sp
-            )
-        }
+        Text(
+            if (isParsing) "解析中..." else "粘贴并解析",
+            color = Color.White.copy(alpha = if (enabled) 1f else 0.7f),
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.25.sp
+        )
     }
 }
 
@@ -481,6 +445,12 @@ fun ResultSection(
     isDownloading: Boolean,
     downloadPercent: Int,
     isGettingShortLink: Boolean,
+    showCoverSaveDialog: Boolean,
+    onCoverClicked: () -> Unit,
+    onTitleClicked: () -> Unit,
+    onAuthorClicked: () -> Unit,
+    onConfirmSaveCover: () -> Unit,
+    onDismissCoverDialog: () -> Unit,
     onDownload: () -> Unit,
     onCopyLongLink: () -> Unit,
     onCopyShortLink: () -> Unit,
@@ -488,7 +458,12 @@ fun ResultSection(
 ) {
     Column(modifier = Modifier.fillMaxWidth().widthIn(max = cardMaxWidth())) {
         // Video card
-        VideoCard(data)
+        VideoCard(
+            data = data,
+            onCoverClicked = onCoverClicked,
+            onTitleClicked = onTitleClicked,
+            onAuthorClicked = onAuthorClicked
+        )
         Spacer(Modifier.height(16.dp))
 
         // Action grid
@@ -513,10 +488,34 @@ fun ResultSection(
             }
         }
     }
+
+    // Cover save confirmation dialog
+    if (showCoverSaveDialog) {
+        AlertDialog(
+            onDismissRequest = onDismissCoverDialog,
+            title = { Text("保存封面图片") },
+            text = { Text("是否将视频封面保存到相册？") },
+            confirmButton = {
+                TextButton(onClick = onConfirmSaveCover) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissCoverDialog) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 @Composable
-fun VideoCard(data: VideoData) {
+fun VideoCard(
+    data: VideoData,
+    onCoverClicked: () -> Unit = {},
+    onTitleClicked: () -> Unit = {},
+    onAuthorClicked: () -> Unit = {}
+) {
     GlassCard {
         Column {
             // Cover image with overlay
@@ -526,6 +525,11 @@ fun VideoCard(data: VideoData) {
                         .fillMaxWidth()
                         .height(200.dp)
                         .clip(RoundedCornerShape(16.dp))
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = onCoverClicked
+                        )
                 ) {
                     AsyncImage(
                         model = data.coverUrl,
@@ -558,7 +562,12 @@ fun VideoCard(data: VideoData) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = 22.sp,
-                    letterSpacing = (-0.25).sp
+                    letterSpacing = (-0.25).sp,
+                    modifier = Modifier.clickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = onTitleClicked
+                    )
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -587,7 +596,12 @@ fun VideoCard(data: VideoData) {
                         "@${author.name}",
                         color = iOSSecondary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = onAuthorClicked
+                        )
                     )
                 }
             }

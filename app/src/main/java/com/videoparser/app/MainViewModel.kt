@@ -18,6 +18,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var isDownloading by mutableStateOf(false)
     var downloadPercent by mutableIntStateOf(0)
     var isGettingShortLink by mutableStateOf(false)
+    var isSavingCover by mutableStateOf(false)
+    var showCoverSaveDialog by mutableStateOf(false)
 
     val toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val copyEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -118,5 +120,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         shareEvents.tryEmit(data)
+    }
+
+    fun onCoverClicked() {
+        val data = parseData
+        if (data == null || data.coverUrl.isBlank()) {
+            toast("没有可保存的封面")
+            return
+        }
+        showCoverSaveDialog = true
+    }
+
+    fun dismissCoverSaveDialog() {
+        showCoverSaveDialog = false
+    }
+
+    fun confirmSaveCover() {
+        if (isSavingCover) return
+        val data = parseData
+        if (data == null || data.coverUrl.isBlank()) return
+        showCoverSaveDialog = false
+        isSavingCover = true
+        viewModelScope.launch {
+            val title = data.title.ifBlank { "cover" }
+            val ok = VideoDownloader.downloadImage(
+                getApplication(),
+                data.coverUrl.trim(),
+                title
+            )
+            isSavingCover = false
+            toast(if (ok) "封面已保存到相册" else "封面保存失败")
+        }
+    }
+
+    fun copyTitle() {
+        val data = parseData
+        if (data == null || data.title.isBlank()) {
+            toast("没有可复制的标题")
+            return
+        }
+        copyEvents.tryEmit(data.title)
+        toast("标题已复制")
+    }
+
+    fun copyAuthorName() {
+        val data = parseData
+        val name = data?.author?.name
+        if (name.isNullOrBlank()) {
+            toast("没有可复制的作者名称")
+            return
+        }
+        copyEvents.tryEmit(name)
+        toast("作者名称已复制")
     }
 }
