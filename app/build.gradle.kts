@@ -12,8 +12,8 @@ android {
         applicationId = "com.videoparser.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 101
-        versionName = System.getenv("VERSION_NAME") ?: "1.0.1"
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 102
+        versionName = System.getenv("VERSION_NAME") ?: "1.0.2"
     }
 
     signingConfigs {

@@ -3,7 +3,6 @@ package com.videoparser.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -28,11 +27,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -64,16 +61,6 @@ class MainActivity : ComponentActivity() {
                     cm.setPrimaryClip(ClipData.newPlainText("link", text))
                 }
             }
-            LaunchedEffect(Unit) {
-                viewModel.shareEvents.collectLatest { data ->
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_SUBJECT, data.title.ifBlank { "分享视频" })
-                        putExtra(Intent.EXTRA_TEXT, data.videoUrl)
-                    }
-                    startActivity(Intent.createChooser(intent, "分享视频"))
-                }
-            }
             VideoParserScreen(viewModel)
         }
     }
@@ -84,14 +71,9 @@ class MainActivity : ComponentActivity() {
 // Primary - iOS System Blue
 private val iOSBlue       = Color(0xFF007AFF)
 private val iOSBlueLight  = Color(0xFF5AC8FA)
-private val iOSBlueDark   = Color(0xFF0055CC)
 
 // Semantic
 private val iOSGreen      = Color(0xFF34C759)
-private val iOSGreenLight = Color(0xFF30D158)
-private val iOSOrange     = Color(0xFFFF9500)
-private val iOSRed        = Color(0xFFFF3B30)
-private val iOSTeal       = Color(0xFF5AC8FA)
 private val iOSPurple     = Color(0xFFAF52DE)
 
 // Neutrals
@@ -116,24 +98,6 @@ private val BgGradient = Brush.verticalGradient(
         Color(0xFFEDEDF5),
         Color(0xFFF5F5FA)
     )
-)
-private val AccentGradient = Brush.horizontalGradient(
-    listOf(iOSBlue, Color(0xFF5856D6))
-)
-private val AccentGradientDisabled = Brush.horizontalGradient(
-    listOf(Color(0xFFB0C4DE), Color(0xFFC5B8E0))
-)
-private val GreenGradient = Brush.linearGradient(
-    listOf(iOSGreen, iOSGreenLight)
-)
-private val TealGradient  = Brush.linearGradient(
-    listOf(iOSTeal, iOSBlue)
-)
-private val OrangeGradient = Brush.linearGradient(
-    listOf(iOSOrange, Color(0xFFFF648E))
-)
-private val PurpleGradient = Brush.linearGradient(
-    listOf(iOSPurple, Color(0xFF5856D6))
 )
 
 /* ═══════════════════════ Responsive Helpers ═══════════════════════════════ */
@@ -219,17 +183,13 @@ fun VideoParserScreen(vm: MainViewModel) {
                     data = data,
                     isDownloading = vm.isDownloading,
                     downloadPercent = vm.downloadPercent,
-                    isGettingShortLink = vm.isGettingShortLink,
                     showCoverSaveDialog = vm.showCoverSaveDialog,
                     onCoverClicked = vm::onCoverClicked,
                     onTitleClicked = vm::copyTitle,
                     onAuthorClicked = vm::copyAuthorName,
                     onConfirmSaveCover = vm::confirmSaveCover,
                     onDismissCoverDialog = vm::dismissCoverSaveDialog,
-                    onDownload = vm::download,
-                    onCopyLongLink = vm::copyLongLink,
-                    onCopyShortLink = vm::copyShortLink,
-                    onShare = vm::share
+                    onDownload = vm::download
                 )
             } else {
                 EmptyState()
@@ -444,17 +404,13 @@ fun ResultSection(
     data: VideoData,
     isDownloading: Boolean,
     downloadPercent: Int,
-    isGettingShortLink: Boolean,
     showCoverSaveDialog: Boolean,
     onCoverClicked: () -> Unit,
     onTitleClicked: () -> Unit,
     onAuthorClicked: () -> Unit,
     onConfirmSaveCover: () -> Unit,
     onDismissCoverDialog: () -> Unit,
-    onDownload: () -> Unit,
-    onCopyLongLink: () -> Unit,
-    onCopyShortLink: () -> Unit,
-    onShare: () -> Unit
+    onDownload: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth().widthIn(max = cardMaxWidth())) {
         // Video card
@@ -466,14 +422,10 @@ fun ResultSection(
         )
         Spacer(Modifier.height(16.dp))
 
-        // Action grid
-        ActionGrid(
+        // Download button
+        DownloadButton(
             isDownloading = isDownloading,
-            isGettingShortLink = isGettingShortLink,
-            onDownload = onDownload,
-            onCopyLongLink = onCopyLongLink,
-            onCopyShortLink = onCopyShortLink,
-            onShare = onShare
+            onDownload = onDownload
         )
 
         // Progress bar
@@ -609,142 +561,31 @@ fun VideoCard(
     }
 }
 
-/* ═════════════════════════ Action Grid ════════════════════════════════════ */
+/* ═════════════════════════ Download Button ═════════════════════════════════ */
 
 @Composable
-fun ActionGrid(
+fun DownloadButton(
     isDownloading: Boolean,
-    isGettingShortLink: Boolean,
-    onDownload: () -> Unit,
-    onCopyLongLink: () -> Unit,
-    onCopyShortLink: () -> Unit,
-    onShare: () -> Unit
+    onDownload: () -> Unit
 ) {
-    val actions = listOf(
-        ActionItem(
-            label = if (isDownloading) "下载中" else "下载视频",
-            iconRes = R.drawable.ic_action_1,
-            gradient = GreenGradient,
-            shadowColor = iOSGreen.copy(alpha = 0.12f),
-            disabled = isDownloading,
-            onClick = onDownload
-        ),
-        ActionItem(
-            label = "复制链接",
-            iconRes = R.drawable.ic_action_2,
-            gradient = AccentGradient,
-            shadowColor = iOSBlue.copy(alpha = 0.12f),
-            disabled = false,
-            onClick = onCopyLongLink
-        ),
-        ActionItem(
-            label = if (isGettingShortLink) "获取中" else "短链接",
-            iconRes = R.drawable.ic_action_3,
-            gradient = OrangeGradient,
-            shadowColor = iOSOrange.copy(alpha = 0.12f),
-            disabled = isGettingShortLink,
-            onClick = onCopyShortLink
-        ),
-        ActionItem(
-            label = "分享",
-            iconRes = R.drawable.ic_action_4,
-            gradient = PurpleGradient,
-            shadowColor = iOSPurple.copy(alpha = 0.12f),
-            disabled = false,
-            onClick = onShare
-        )
-    )
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        actions.forEach { action ->
-            Box(modifier = Modifier.weight(1f)) {
-                ActionCell(action)
-            }
-        }
-    }
-}
-
-private data class ActionItem(
-    val label: String,
-    val iconRes: Int,
-    val gradient: Brush,
-    val shadowColor: Color,
-    val disabled: Boolean,
-    val onClick: () -> Unit
-)
-
-@Composable
-private fun ActionCell(item: ActionItem) {
-    var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        if (pressed) 0.96f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "scale"
-    )
-
-    Box(
+    val enabled = !isDownloading
+    PressButton(
         modifier = Modifier
             .fillMaxWidth()
-            .scale(scale)
-            .clip(RoundedCornerShape(20.dp))
-            .background(GlassWhite)
-            .border(0.5.dp, GlassBorder, RoundedCornerShape(20.dp))
-            .shadow(
-                elevation = 4.dp,
-                shape = RoundedCornerShape(20.dp),
-                ambientColor = item.shadowColor,
-                spotColor = item.shadowColor
-            )
-            .then(
-                if (!item.disabled)
-                    Modifier.clickable(
-                        interactionSource = null,
-                        indication = null,
-                        onClick = {
-                            pressed = true
-                            item.onClick()
-                        }
-                    )
-                else Modifier
-            )
-            .then(if (item.disabled) Modifier.graphicsLayer { alpha = 0.45f } else Modifier)
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center
+            .widthIn(max = cardMaxWidth()),
+        onClick = { if (enabled) onDownload() },
+        background = if (enabled) iOSGreen else Color(0xFFB0C4DE),
+        shadowColor = if (enabled) iOSGreen.copy(alpha = 0.3f) else Color.Transparent,
+        contentColor = Color.White,
+        enabled = enabled
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(item.gradient),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    painter = painterResource(item.iconRes),
-                    contentDescription = item.label,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                item.label,
-                fontSize = 10.sp,
-                color = iOSSecondary,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.1.sp
-            )
-        }
-    }
-
-    // Reset pressed state
-    LaunchedEffect(pressed) {
-        if (pressed) {
-            kotlinx.coroutines.delay(150)
-            pressed = false
-        }
+        Text(
+            if (isDownloading) "下载中..." else "下载视频",
+            color = Color.White.copy(alpha = if (enabled) 1f else 0.7f),
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.25.sp
+        )
     }
 }
 

@@ -17,13 +17,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var parseData by mutableStateOf<VideoData?>(null)
     var isDownloading by mutableStateOf(false)
     var downloadPercent by mutableIntStateOf(0)
-    var isGettingShortLink by mutableStateOf(false)
     var isSavingCover by mutableStateOf(false)
     var showCoverSaveDialog by mutableStateOf(false)
 
     val toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val copyEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val shareEvents = MutableSharedFlow<VideoData>(extraBufferCapacity = 8)
 
     private fun toast(message: String) {
         toastEvents.tryEmit(message)
@@ -81,45 +79,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isDownloading = false
             toast(if (ok) "下载完成" else "下载失败")
         }
-    }
-
-    fun copyLongLink() {
-        val url = videoUrl.trim()
-        if (url.isEmpty()) {
-            toast("没有可复制的链接")
-            return
-        }
-        copyEvents.tryEmit(url)
-        toast("长链接已复制")
-    }
-
-    fun copyShortLink() {
-        if (isGettingShortLink) return
-        val data = parseData
-        if (data == null || data.videoUrl.isBlank()) {
-            toast("没有可转换的链接")
-            return
-        }
-        isGettingShortLink = true
-        viewModelScope.launch {
-            val shortLink = VideoApi.createShortLink(data.videoUrl)
-            isGettingShortLink = false
-            if (shortLink != null) {
-                copyEvents.tryEmit(shortLink)
-                toast("短链接已复制")
-            } else {
-                toast("获取短链接失败")
-            }
-        }
-    }
-
-    fun share() {
-        val data = parseData
-        if (data == null || data.videoUrl.isBlank()) {
-            toast("没有可分享的视频")
-            return
-        }
-        shareEvents.tryEmit(data)
     }
 
     fun onCoverClicked() {
