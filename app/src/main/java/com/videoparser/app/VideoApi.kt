@@ -24,18 +24,20 @@ sealed class ParseResult {
 
 object VideoApi {
 
-    private const val PARSE_BASE = "http://122.51.115.245:8888"
+    /** 默认解析服务器地址 */
+    const val DEFAULT_SERVER = "http://122.51.115.245:8888"
 
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
+    suspend fun parse(url: String, baseUrl: String = DEFAULT_SERVER): ParseResult = withContext(Dispatchers.IO) {
         try {
+            val base = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
             val encoded = URLEncoder.encode(url.trim(), "UTF-8")
             val request = Request.Builder()
-                .url("$PARSE_BASE/video/share/url/parse?url=$encoded")
+                .url("$base/video/share/url/parse?url=$encoded")
                 .get()
                 .build()
             client.newCall(request).execute().use { response ->
@@ -64,3 +66,4 @@ object VideoApi {
             ParseResult.Error("网络错误，请检查网络")
         }
     }
+}

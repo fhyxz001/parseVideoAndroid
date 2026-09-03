@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -142,14 +143,36 @@ fun VideoParserScreen(vm: MainViewModel) {
             Spacer(Modifier.height(8.dp))
 
             // ── Header ──
-            Text(
-                text = "视频解析助手",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = iOSLabel,
-                textAlign = TextAlign.Center,
-                letterSpacing = (-0.5).sp
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = cardMaxWidth()),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "视频解析助手",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = iOSLabel,
+                    textAlign = TextAlign.Center,
+                    letterSpacing = (-0.5).sp
+                )
+                // 服务器设置入口
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = vm::openServerSettings
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("⚙️", fontSize = 18.sp)
+                }
+            }
             Spacer(Modifier.height(20.dp))
 
             // Input card
@@ -231,6 +254,17 @@ fun VideoParserScreen(vm: MainViewModel) {
                     }
                 }
             }
+        }
+
+        // 服务器设置弹窗
+        if (vm.showServerSettings) {
+            ServerSettingsDialog(
+                serverDraft = vm.serverDraft,
+                onUrlChange = vm::onServerDraftChanged,
+                onSave = vm::saveServerSettings,
+                onReset = vm::resetServerSettings,
+                onDismiss = vm::dismissServerSettings
+            )
         }
     }
 }
@@ -773,4 +807,59 @@ fun PressButton(
             pressed = false
         }
     }
+}
+
+/* ════════════════════ Server Settings Dialog ═══════════════════════════════ */
+
+@Composable
+fun ServerSettingsDialog(
+    serverDraft: String,
+    onUrlChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("解析服务器设置", fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                Text(
+                    "设置视频解析服务地址，例如：http://192.168.1.100:8888",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = iOSSecondary
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = serverDraft,
+                    onValueChange = onUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("服务器地址") },
+                    placeholder = { Text("http://") }
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "恢复默认",
+                    fontSize = 13.sp,
+                    color = iOSBlue,
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = onReset
+                        )
+                        .padding(6.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onSave) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }

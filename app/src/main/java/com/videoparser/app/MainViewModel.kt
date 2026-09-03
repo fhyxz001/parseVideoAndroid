@@ -20,6 +20,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var isSavingCover by mutableStateOf(false)
     var showCoverSaveDialog by mutableStateOf(false)
 
+    // 服务器设置
+    var serverUrl by mutableStateOf("")
+    var serverDraft by mutableStateOf("")
+    var showServerSettings by mutableStateOf(false)
+
     val toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val copyEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
@@ -40,6 +45,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    init {
+        serverUrl = SettingsStore.getServer(getApplication())
+    }
+
+    fun openServerSettings() {
+        serverDraft = serverUrl
+        showServerSettings = true
+    }
+
+    fun dismissServerSettings() {
+        showServerSettings = false
+    }
+
+    fun onServerDraftChanged(value: String) {
+        serverDraft = value
+    }
+
+    fun saveServerSettings() {
+        val value = serverDraft.trim().trimEnd('/')
+        when {
+            value.isBlank() -> toast("服务器地址不能为空")
+            !value.startsWith("http://") && !value.startsWith("https://") ->
+                toast("地址需以 http:// 或 https:// 开头")
+            else -> {
+                SettingsStore.setServer(getApplication(), value)
+                serverUrl = value
+                showServerSettings = false
+                toast("服务器地址已保存")
+            }
+        }
+    }
+
+    fun resetServerSettings() {
+        serverDraft = VideoApi.DEFAULT_SERVER
+        toast("已填入默认地址，点击保存生效")
+    }
+
     fun parse() {
         val url = videoUrl.trim()
         if (url.isEmpty()) {
@@ -49,7 +91,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         isParsing = true
         parseData = null
         viewModelScope.launch {
-            when (val result = VideoApi.parse(url)) {
+            when (val result = VideoApi.parse(url, serverUrl)) {
                 is ParseResult.Success -> {
                     parseData = result.data
                     toast("解析成功")
