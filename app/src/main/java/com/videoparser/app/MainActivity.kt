@@ -39,8 +39,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import kotlinx.coroutines.flow.collectLatest
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
@@ -170,7 +172,11 @@ fun VideoParserScreen(vm: MainViewModel) {
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("⚙️", fontSize = 18.sp)
+                    Image(
+                        painter = painterResource(R.drawable.setting),
+                        contentDescription = "设置",
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
             Spacer(Modifier.height(20.dp))
@@ -206,6 +212,9 @@ fun VideoParserScreen(vm: MainViewModel) {
                     data = data,
                     isDownloading = vm.isDownloading,
                     downloadPercent = vm.downloadPercent,
+                    downloadedBytes = vm.downloadedBytes,
+                    downloadTotalBytes = vm.downloadTotalBytes,
+                    videoFileSize = vm.videoFileSize,
                     showCoverSaveDialog = vm.showCoverSaveDialog,
                     onCoverClicked = vm::onCoverClicked,
                     onTitleClicked = vm::copyTitle,
@@ -438,6 +447,9 @@ fun ResultSection(
     data: VideoData,
     isDownloading: Boolean,
     downloadPercent: Int,
+    downloadedBytes: Long,
+    downloadTotalBytes: Long,
+    videoFileSize: Long,
     showCoverSaveDialog: Boolean,
     onCoverClicked: () -> Unit,
     onTitleClicked: () -> Unit,
@@ -456,6 +468,19 @@ fun ResultSection(
         )
         Spacer(Modifier.height(16.dp))
 
+        // 视频文件大小
+        if (videoFileSize > 0) {
+            Text(
+                text = "视频大小：${formatFileSize(videoFileSize)}",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                color = iOSSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
         // Download button
         DownloadButton(
             isDownloading = isDownloading,
@@ -470,7 +495,12 @@ fun ResultSection(
         ) {
             Column {
                 Spacer(Modifier.height(16.dp))
-                ProgressSection(downloadPercent)
+                ProgressSection(
+                    percent = downloadPercent,
+                    downloadedBytes = downloadedBytes,
+                    totalBytes = downloadTotalBytes,
+                    knownFileSize = videoFileSize
+                )
             }
         }
     }
@@ -626,7 +656,20 @@ fun DownloadButton(
 /* ═════════════════════════ Progress ═══════════════════════════════════════ */
 
 @Composable
-fun ProgressSection(percent: Int) {
+fun ProgressSection(
+    percent: Int,
+    downloadedBytes: Long,
+    totalBytes: Long,
+    knownFileSize: Long
+) {
+    val actualTotal = if (totalBytes > 0) totalBytes else knownFileSize
+    val hasTotal = actualTotal > 0
+    val displayPercent = if (hasTotal) {
+        if (percent >= 0) percent else (downloadedBytes * 100 / actualTotal).toInt().coerceIn(0, 100)
+    } else {
+        -1
+    }
+
     GlassCard {
         Column {
             Row(
@@ -642,10 +685,24 @@ fun ProgressSection(percent: Int) {
                     letterSpacing = (-0.2).sp
                 )
                 Text(
-                    "$percent%",
+                    if (displayPercent >= 0) "$displayPercent%" else "",
                     color = iOSBlue,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp
+                )
+            }
+
+            if (downloadedBytes > 0 || hasTotal) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (hasTotal) {
+                        "${formatFileSize(downloadedBytes)} / ${formatFileSize(actualTotal)}"
+                    } else {
+                        "已下载 ${formatFileSize(downloadedBytes)}"
+                    },
+                    color = iOSSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
 
@@ -655,29 +712,50 @@ fun ProgressSection(percent: Int) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
+                    .height(if (displayPercent >= 0) 8.dp else 20.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(Color(0xFFE5E5EA))
             ) {
-                val animatedPercent by animateFloatAsState(
-                    percent / 100f,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy),
-                    label = "prog"
-                )
+                if (displayPercent >= 0) {
+                    val animatedPercent by animateFloatAsState(
+                        displayPercent / 100f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy),
+                        label = "prog"
+                    )
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(animatedPercent)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(iOSBlue, iOSBlueLight)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(animatedPercent)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(iOSBlue, iOSBlueLight)
+                                )
                             )
-                        )
-                )
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(16.dp),
+                        color = iOSBlue,
+                        strokeWidth = 2.dp
+                    )
+                }
             }
         }
+    }
+}
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "未知大小"
+    val value = bytes.toDouble()
+    return when {
+        value >= 1.0 * 1024 * 1024 * 1024 -> String.format(Locale.US, "%.2f GB", value / (1024 * 1024 * 1024))
+        value >= 1.0 * 1024 * 1024 -> String.format(Locale.US, "%.1f MB", value / (1024 * 1024))
+        value >= 1.0 * 1024 -> String.format(Locale.US, "%.1f KB", value / 1024)
+        else -> "$bytes B"
     }
 }
 

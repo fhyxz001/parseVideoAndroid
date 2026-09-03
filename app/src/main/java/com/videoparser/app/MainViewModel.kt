@@ -3,6 +3,7 @@ package com.videoparser.app
 import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -17,6 +18,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var parseData by mutableStateOf<VideoData?>(null)
     var isDownloading by mutableStateOf(false)
     var downloadPercent by mutableIntStateOf(0)
+    var downloadedBytes by mutableLongStateOf(0L)
+    var downloadTotalBytes by mutableLongStateOf(0L)
+    var videoFileSize by mutableLongStateOf(0L)
     var isSavingCover by mutableStateOf(false)
     var showCoverSaveDialog by mutableStateOf(false)
 
@@ -40,6 +44,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!text.isNullOrBlank()) {
             videoUrl = text
             parseData = null
+            videoFileSize = 0L
         } else {
             toast("剪贴板为空")
         }
@@ -90,11 +95,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         isParsing = true
         parseData = null
+        videoFileSize = 0L
         viewModelScope.launch {
             when (val result = VideoApi.parse(url, serverUrl)) {
                 is ParseResult.Success -> {
                     parseData = result.data
                     toast("解析成功")
+                    fetchVideoFileSize(result.data.videoUrl)
                 }
                 is ParseResult.Error -> toast(result.message)
             }
@@ -111,15 +118,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         isDownloading = true
         downloadPercent = 0
+        downloadedBytes = 0L
+        downloadTotalBytes = 0L
         viewModelScope.launch {
             val title = data.title.ifBlank { "video" }
             val ok = VideoDownloader.download(
                 getApplication(),
                 data.videoUrl.trim(),
                 title
-            ) { percent -> downloadPercent = percent }
+            ) { progress ->
+                downloadPercent = progress.percent
+                downloadedBytes = progress.downloadedBytes
+                downloadTotalBytes = if (progress.totalBytes > 0) {
+                    progress.totalBytes
+                } else {
+                    videoFileSize
+                }
+            }
             isDownloading = false
             toast(if (ok) "下载完成" else "下载失败")
+        }
+    }
+
+    private fun fetchVideoFileSize(url: String) {
+        if (url.isBlank()) return
+        videoFileSize = 0L
+        val targetUrl = url.trim()
+        viewModelScope.launch {
+            val size = VideoDownloader.fetchVideoSize(targetUrl)
+            // 防止异步返回时用户已经解析了新的视频
+            if (parseData?.videoUrl?.trim() == targetUrl) {
+                videoFileSize = size
+            }
         }
     }
 

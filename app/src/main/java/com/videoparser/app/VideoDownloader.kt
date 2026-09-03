@@ -11,13 +11,19 @@ import okhttp3.Request
 import java.io.File
 import java.io.OutputStream
 
+data class DownloadProgress(
+    val percent: Int,
+    val downloadedBytes: Long,
+    val totalBytes: Long
+)
+
 object VideoDownloader {
 
     suspend fun download(
         context: Context,
         videoUrl: String,
         title: String,
-        onProgress: (Int) -> Unit
+        onProgress: (DownloadProgress) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         val fileName = title.replace(Regex("[\\\\/:*?\"<>|]"), "").ifBlank { "video" } + ".mp4"
         try {
@@ -38,11 +44,39 @@ object VideoDownloader {
         }
     }
 
+    /** 获取视频文件大小（字节），获取失败时返回 -1 */
+    suspend fun fetchVideoSize(videoUrl: String): Long = withContext(Dispatchers.IO) {
+        try {
+            // 先尝试 HEAD 请求
+            val headRequest = Request.Builder().url(videoUrl).head().build()
+            VideoApi.client.newCall(headRequest).execute().use { response ->
+                val len = response.header("Content-Length")?.toLongOrNull() ?: -1L
+                if (response.isSuccessful && len > 0) return@withContext len
+            }
+
+            // 部分服务器不支持 HEAD，退化为 Range 请求只取 1 字节
+            val rangeRequest = Request.Builder()
+                .url(videoUrl)
+                .header("Range", "bytes=0-0")
+                .get()
+                .build()
+            VideoApi.client.newCall(rangeRequest).execute().use { response ->
+                response.header("Content-Range")
+                    ?.substringAfterLast('/', "")
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                    ?: -1L
+            }
+        } catch (e: Exception) {
+            -1L
+        }
+    }
+
     private fun copyWithProgress(
         input: java.io.InputStream,
         output: OutputStream,
         totalSize: Long,
-        onProgress: (Int) -> Unit
+        onProgress: (DownloadProgress) -> Unit
     ) {
         val buffer = ByteArray(64 * 1024)
         var downloaded = 0L
@@ -51,9 +85,13 @@ object VideoDownloader {
             if (read == -1) break
             output.write(buffer, 0, read)
             downloaded += read
-            if (totalSize > 0) {
-                onProgress((downloaded * 100 / totalSize).toInt())
-            }
+            onProgress(
+                DownloadProgress(
+                    percent = if (totalSize > 0) (downloaded * 100 / totalSize).toInt() else -1,
+                    downloadedBytes = downloaded,
+                    totalBytes = totalSize
+                )
+            )
         }
         output.flush()
     }
@@ -63,7 +101,7 @@ object VideoDownloader {
         fileName: String,
         totalSize: Long,
         input: java.io.InputStream,
-        onProgress: (Int) -> Unit
+        onProgress: (DownloadProgress) -> Unit
     ): Boolean {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
@@ -93,7 +131,7 @@ object VideoDownloader {
         fileName: String,
         totalSize: Long,
         input: java.io.InputStream,
-        onProgress: (Int) -> Unit
+        onProgress: (DownloadProgress) -> Unit
     ): Boolean {
         val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
         if (!dir.exists()) dir.mkdirs()
