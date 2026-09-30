@@ -20,6 +20,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -41,7 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var showServerSettings by mutableStateOf(false)
 
     // 剪辑
-    var showClipSheet by mutableStateOf(false)
+    var showClipPage by mutableStateOf(false)
     var clipProbing by mutableStateOf(false)
     var clipDurationMs by mutableLongStateOf(0L)
     var clipStartMs by mutableLongStateOf(0L)
@@ -52,10 +54,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var clipThumbs by mutableStateOf<List<ImageBitmap?>>(emptyList())
     var clipThumbsLoading by mutableStateOf(false)
 
+    // 拖动把手时的当前帧预览
+    var clipPreviewFrame by mutableStateOf<ImageBitmap?>(null)
+    var clipPreviewTimeMs by mutableLongStateOf(0L)
+
     private var clipProbe: ClipProbe? = null
     private var clipProbeKey: String? = null
     private var clipJob: Job? = null
     private var clipThumbsKey: String? = null
+
+    // 取帧专用（单实例复用，避免每次 setDataSource 重新建连）
+    private var scrubRetriever: MediaMetadataRetriever? = null
+    private var scrubUrl: String? = null
+    private var pendingScrubMs: Long? = null
+    private val scrubMutex = Mutex()
 
     val toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val copyEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -238,6 +250,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /* ═════════════════════ 剪辑 ═════════════════════ */
 
     private fun resetClipState() {
+        releaseScrub()
         clipProbe = null
         clipProbeKey = null
         clipThumbsKey = null
@@ -252,19 +265,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clipPhaseText = ""
     }
 
-    fun openClipSheet() {
+    fun openClipPage() {
         if (parseData == null) {
             toast("请先解析视频")
             return
         }
-        showClipSheet = true
+        showClipPage = true
         ensureClipProbe()
         ensureClipThumbs()
     }
 
-    fun dismissClipSheet() {
+    fun dismissClipPage() {
         if (isClipping) toast("剪辑仍在后台进行，完成后会提示")
-        showClipSheet = false
+        releaseScrub()
+        showClipPage = false
     }
 
     /** 探测视频元数据（时长 + 采样索引），按 URL 缓存，解析成功后会自动预探测 */
@@ -355,7 +369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 when (result) {
                     is ClipResult.Success -> {
-                        showClipSheet = false
+                        showClipPage = false
                         toast("剪辑已保存到相册")
                     }
                     is ClipResult.Failure -> toast(result.message)
@@ -381,6 +395,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ClipPhase.DOWNLOADING_FULL -> "服务器不支持分段下载，正在下载完整视频..."
         ClipPhase.TRIMMING -> "正在剪切视频..."
         ClipPhase.SAVING -> "正在保存到相册..."
+    }
+
+    /* ══════════════ 拖动把手时的当前帧预览 ══════════════ */
+
+    /** 开始拖动把手：确保取帧器就绪并加载第一帧 */
+    fun beginClipScrub(timeMs: Long) {
+        clipPreviewTimeMs = timeMs
+        pendingScrubMs = timeMs
+        val url = parseData?.videoUrl?.trim() ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { ensureScrubRetriever(url) }
+            runScrubLoader()
+        }
+    }
+
+    /** 拖动中：更新目标时间，由后台加载器按最新时间取帧（自动节流合并） */
+    fun updateClipScrub(timeMs: Long) {
+        clipPreviewTimeMs = timeMs
+        pendingScrubMs = timeMs
+        runScrubLoader()
+    }
+
+    fun endClipScrub() {
+        // 保留最后一帧用于下次拖动前展示，取帧器也复用
+    }
+
+    /** 串行取帧循环：始终取 pendingScrubMs 中最新的时间，避免并发使用同一 retriever */
+    private fun runScrubLoader() {
+        viewModelScope.launch {
+            scrubMutex.withLock {
+                while (true) {
+                    val target = pendingScrubMs ?: break
+                    pendingScrubMs = null
+                    val retriever = scrubRetriever ?: break
+                    val bmp = withContext(Dispatchers.IO) {
+                        try {
+                            retriever.getFrameAtTime(
+                                target * 1000,
+                                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    if (bmp != null) {
+                        clipPreviewFrame = scaleDown(bmp, PREVIEW_TARGET_WIDTH)?.asImageBitmap()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun ensureScrubRetriever(url: String) {
+        if (scrubRetriever != null && scrubUrl == url) return
+        releaseScrub()
+        try {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(url, HashMap<String, String>())
+            scrubRetriever = retriever
+            scrubUrl = url
+        } catch (e: Exception) {
+            scrubRetriever = null
+        }
+    }
+
+    private fun releaseScrub() {
+        pendingScrubMs = null
+        val retriever = scrubRetriever
+        scrubRetriever = null
+        scrubUrl = null
+        clipPreviewFrame = null
+        clipPreviewTimeMs = 0L
+        retriever?.let {
+            try {
+                it.release()
+            } catch (e: Exception) {
+            }
+        }
     }
 
     /** 加载时间轴缩略图（3 路并行取关键帧，逐张更新） */
@@ -456,8 +548,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val DEFAULT_CLIP_WINDOW_MS = 10 * 60 * 1000L
         private const val MIN_CLIP_SPAN_MS = 1000L
-        private const val CLIP_THUMB_COUNT = 8
+        private const val CLIP_THUMB_COUNT = 16
         private const val THUMB_WORKERS = 3
         private const val THUMB_TARGET_WIDTH = 320
+        private const val PREVIEW_TARGET_WIDTH = 480
     }
 }

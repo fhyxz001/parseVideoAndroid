@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.*
@@ -17,12 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,10 +51,14 @@ import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import coil.compose.AsyncImage
 import kotlinx.coroutines.flow.collectLatest
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 
 class MainActivity : ComponentActivity() {
 
@@ -237,7 +239,7 @@ fun VideoParserScreen(vm: MainViewModel) {
                     onConfirmSaveCover = vm::confirmSaveCover,
                     onDismissCoverDialog = vm::dismissCoverSaveDialog,
                     onDownload = vm::download,
-                    onClipClicked = vm::openClipSheet
+                    onClipClicked = vm::openClipPage
                 )
             } else {
                 EmptyState()
@@ -292,8 +294,14 @@ fun VideoParserScreen(vm: MainViewModel) {
             )
         }
 
-        // 剪辑底部弹窗
-        ClipSheet(vm)
+        // 剪辑页（全屏覆盖，从右侧滑入，避免误触关闭）
+        AnimatedVisibility(
+            visible = vm.showClipPage,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+        ) {
+            ClipPage(vm)
+        }
     }
 }
 
@@ -995,77 +1003,77 @@ fun ClipDownloadButton(onClipClicked: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 剪辑页：全屏页面（返回键或左上角返回，避免误触关闭） */
 @Composable
-fun ClipSheet(vm: MainViewModel) {
-    if (!vm.showClipSheet) return
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = vm::dismissClipSheet,
-        sheetState = sheetState,
-        containerColor = Color.White,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        dragHandle = null
-    ) {
-        ClipSheetContent(vm)
-    }
-}
+fun ClipPage(vm: MainViewModel) {
+    BackHandler(enabled = vm.showClipPage) { vm.dismissClipPage() }
 
-@Composable
-fun ClipSheetContent(vm: MainViewModel) {
-    Column(
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .padding(bottom = 28.dp)
+            .fillMaxSize()
+            .background(BgGradient)
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
-        // ── 拖拽把手 ──
-        Box(
+        Column(
             modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(top = 10.dp, bottom = 8.dp)
-                .size(width = 36.dp, height = 4.dp)
-                .background(iOSTertiary, RoundedCornerShape(2.dp))
-        )
-        // ── Header ──
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text(
-                    "剪辑下载",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = iOSLabel,
-                    letterSpacing = (-0.3).sp
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "拖动滑块，选择要保留的片段",
-                    fontSize = 12.sp,
-                    color = iOSSecondary
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            Box(
+                .fillMaxSize()
+                .widthIn(max = cardMaxWidth())
+                .align(Alignment.TopCenter)
+        ) {
+            // ── 页头：返回 + 标题 ──
+            Row(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(iOSTertiary.copy(alpha = 0.15f))
-                    .clickable(
-                        interactionSource = null,
-                        indication = null,
-                        onClick = vm::dismissClipSheet
-                    ),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("✕", fontSize = 12.sp, color = iOSSecondary)
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(iOSTertiary.copy(alpha = 0.15f))
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = vm::dismissClipPage
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("←", fontSize = 17.sp, color = iOSSecondary, fontWeight = FontWeight.Medium)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(
+                        "剪辑下载",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = iOSLabel,
+                        letterSpacing = (-0.3).sp
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "拖动滑块，选择要保留的片段",
+                        fontSize = 12.sp,
+                        color = iOSSecondary
+                    )
+                }
             }
-        }
-        Spacer(Modifier.height(16.dp))
 
-        when {
-            vm.clipProbing -> ClipProbingView()
-            vm.clipDurationMs <= 0 -> ClipUnavailableView()
-            else -> ClipEditor(vm)
+            // ── 内容 ──
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 24.dp)
+            ) {
+                when {
+                    vm.clipProbing -> ClipProbingView()
+                    vm.clipDurationMs <= 0 -> ClipUnavailableView()
+                    else -> ClipEditor(vm)
+                }
+            }
         }
     }
 }
@@ -1126,7 +1134,12 @@ private fun ClipEditor(vm: MainViewModel) {
         endMs = endMs,
         thumbs = vm.clipThumbs,
         enabled = !vm.isClipping,
-        onRangeChanged = { s, e -> vm.setClipRange(s, e) }
+        previewFrame = vm.clipPreviewFrame,
+        previewTimeMs = vm.clipPreviewTimeMs,
+        onRangeChanged = { s, e -> vm.setClipRange(s, e) },
+        onScrubStart = vm::beginClipScrub,
+        onScrub = vm::updateClipScrub,
+        onScrubEnd = vm::endClipScrub
     )
     Spacer(Modifier.height(10.dp))
 
@@ -1255,7 +1268,14 @@ private fun DurationPill(text: String) {
     }
 }
 
-/** 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手（参考剪辑 App 的厚重白把手） */
+/** 时间轴最大缩放倍率 */
+private const val MAX_ZOOM = 20f
+
+/**
+ * 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手。
+ * 支持双指缩放（以手势中心为锚点，放大后单指平移视口、拖把手到边缘自动跟手），
+ * 拖动把手时上方浮层展示当前位置的视频帧。
+ */
 @Composable
 private fun ClipTimelineStrip(
     durationMs: Long,
@@ -1263,29 +1283,40 @@ private fun ClipTimelineStrip(
     endMs: Long,
     thumbs: List<ImageBitmap?>,
     enabled: Boolean,
-    onRangeChanged: (Long, Long) -> Unit
+    previewFrame: ImageBitmap?,
+    previewTimeMs: Long,
+    onRangeChanged: (Long, Long) -> Unit,
+    onScrubStart: (Long) -> Unit,
+    onScrub: (Long) -> Unit,
+    onScrubEnd: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
     // pointerInput 不随重组重启，用 rememberUpdatedState 保证手势回调读到最新值
     val currentStartMs by rememberUpdatedState(startMs)
     val currentEndMs by rememberUpdatedState(endMs)
     val currentOnRangeChanged by rememberUpdatedState(onRangeChanged)
+    val currentOnScrub by rememberUpdatedState(onScrub)
     var activeHandle by remember { mutableStateOf<Int?>(null) }
+    // 缩放倍率与视口偏移（内容像素）；换视频后重置
+    var zoom by remember(durationMs) { mutableFloatStateOf(1f) }
+    var scrollX by remember(durationMs) { mutableFloatStateOf(0f) }
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .height(88.dp)
     ) {
-        val stripW = maxWidth
         val stripWpx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
-        val startFrac = (startMs.toFloat() / durationMs).coerceIn(0f, 1f)
-        val endFrac = (endMs.toFloat() / durationMs).coerceIn(0f, 1f)
         val handleW = 14.dp
-        val selStart = stripW * startFrac
-        val selWidth = (stripW * (endFrac - startFrac)).coerceAtLeast(handleW)
+        val handleWpx = with(density) { handleW.toPx() }
+        val edgeMarginPx = with(density) { 20.dp.toPx() }
 
-        fun msAt(x: Float): Long = (x / stripWpx * durationMs).toLong().coerceIn(0L, durationMs)
+        val startContentPx = contentOfMs(startMs, stripWpx, zoom, durationMs)
+        val endContentPx = contentOfMs(endMs, stripWpx, zoom, durationMs)
+        val selLeftScreen = startContentPx - scrollX
+        val selWidthScreen = (endContentPx - startContentPx).coerceAtLeast(handleWpx)
+        val selRightScreen = selLeftScreen + selWidthScreen
 
         Box(
             modifier = Modifier
@@ -1293,16 +1324,40 @@ private fun ClipTimelineStrip(
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xFF14141A))
                 .then(
-                    if (enabled) Modifier.pointerInput(durationMs) {
-                        // 点击时间轴：把手就近移动
-                        detectTapGestures { offset ->
-                            val t = msAt(offset.x)
-                            val distStart = kotlin.math.abs(t - currentStartMs)
-                            val distEnd = kotlin.math.abs(currentEndMs - t)
-                            if (distStart <= distEnd) currentOnRangeChanged(t, currentEndMs)
-                            else currentOnRangeChanged(currentStartMs, t)
+                    if (enabled) Modifier
+                        // 双指缩放（以手势中心为锚点）；放大后单指平移视口
+                        .pointerInput(durationMs) {
+                            detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                                if (gestureZoom != 1f) {
+                                    val newZoom = (zoom * gestureZoom).coerceIn(1f, MAX_ZOOM)
+                                    val newContentW = stripWpx * newZoom
+                                    val tAtCentroid = (centroid.x + scrollX) / (stripWpx * zoom) * durationMs
+                                    scrollX = (tAtCentroid / durationMs * newContentW - centroid.x)
+                                        .coerceIn(0f, (newContentW - stripWpx).coerceAtLeast(0f))
+                                    zoom = newZoom
+                                } else if (zoom > 1.01f && pan.x != 0f) {
+                                    scrollX = (scrollX - pan.x)
+                                        .coerceIn(0f, (stripWpx * zoom - stripWpx).coerceAtLeast(0f))
+                                }
+                            }
                         }
-                    } else Modifier
+                        // 单击：把手就近移动；双击：恢复 1x
+                        .pointerInput(durationMs) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    zoom = 1f
+                                    scrollX = 0f
+                                },
+                                onTap = { offset ->
+                                    val t = msOfContent(offset.x + scrollX, stripWpx, zoom, durationMs)
+                                    val distStart = kotlin.math.abs(t - currentStartMs)
+                                    val distEnd = kotlin.math.abs(currentEndMs - t)
+                                    if (distStart <= distEnd) currentOnRangeChanged(t, currentEndMs)
+                                    else currentOnRangeChanged(currentStartMs, t)
+                                }
+                            )
+                        }
+                    else Modifier
                 )
         ) {
             // 缩略图
@@ -1335,32 +1390,36 @@ private fun ClipTimelineStrip(
             Box(
                 Modifier
                     .fillMaxHeight()
-                    .absoluteOffset { IntOffset(selStart.toPx().roundToInt(), 0) }
-                    .width(selWidth)
+                    .absoluteOffset { IntOffset(selLeftScreen.roundToInt(), 0) }
+                    .width(with(density) { selWidthScreen.coerceAtLeast(0f).toDp() })
                     .background(Color.White.copy(alpha = 0.08f))
             )
 
             // 选区外的压暗层
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .width(selStart)
-                    .background(Color.Black.copy(alpha = 0.5f))
-            )
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .align(Alignment.CenterEnd)
-                    .width(stripW - selStart - selWidth)
-                    .background(Color.Black.copy(alpha = 0.5f))
-            )
+            if (selLeftScreen > 0f) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(with(density) { selLeftScreen.coerceAtMost(stripWpx).toDp() })
+                        .background(Color.Black.copy(alpha = 0.5f))
+                )
+            }
+            if (selRightScreen < stripWpx) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .align(Alignment.CenterEnd)
+                        .width(with(density) { (stripWpx - selRightScreen).coerceAtLeast(0f).toDp() })
+                        .background(Color.Black.copy(alpha = 0.5f))
+                )
+            }
 
             // 选区边框
             Box(
                 Modifier
                     .fillMaxHeight()
-                    .absoluteOffset { IntOffset(selStart.toPx().roundToInt(), 0) }
-                    .width(selWidth)
+                    .absoluteOffset { IntOffset(selLeftScreen.roundToInt(), 0) }
+                    .width(with(density) { selWidthScreen.toDp() })
                     .border(2.dp, Color.White, RoundedCornerShape(10.dp))
             )
 
@@ -1368,47 +1427,166 @@ private fun ClipTimelineStrip(
             ClipHandle(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .absoluteOffset {
-                        IntOffset((selStart.toPx() - handleW.toPx() / 2).roundToInt(), 0)
-                    }
+                    .absoluteOffset { IntOffset((selLeftScreen - handleWpx / 2).roundToInt(), 0) }
                     .width(handleW),
                 enabled = enabled,
                 active = activeHandle == 0,
                 onDragStart = {
                     activeHandle = 0
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onScrubStart(currentStartMs)
                 },
-                onDragEnd = { activeHandle = null },
+                onDragEnd = {
+                    activeHandle = null
+                    onScrubEnd()
+                },
                 onDrag = { dragAmount ->
-                    currentOnRangeChanged(
-                        msAt(startFrac * stripWpx + dragAmount),
-                        currentEndMs
-                    )
+                    val newT = msOfContent(contentOfMs(currentStartMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
+                    currentOnRangeChanged(newT, currentEndMs)
+                    currentOnScrub(newT)
+                    panViewportTo(
+                        contentX = contentOfMs(newT, stripWpx, zoom, durationMs),
+                        handleScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX,
+                        stripWpx = stripWpx,
+                        zoom = zoom,
+                        edgeMarginPx = edgeMarginPx
+                    ) { scrollX = it }
                 }
             )
             // 右把手
             ClipHandle(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .absoluteOffset {
-                        IntOffset((selStart.toPx() + selWidth.toPx() - handleW.toPx() / 2).roundToInt(), 0)
-                    }
+                    .absoluteOffset { IntOffset((selRightScreen - handleWpx / 2).roundToInt(), 0) }
                     .width(handleW),
                 enabled = enabled,
                 active = activeHandle == 1,
                 onDragStart = {
                     activeHandle = 1
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onScrubStart(currentEndMs)
                 },
-                onDragEnd = { activeHandle = null },
+                onDragEnd = {
+                    activeHandle = null
+                    onScrubEnd()
+                },
                 onDrag = { dragAmount ->
-                    currentOnRangeChanged(
-                        currentStartMs,
-                        msAt(endFrac * stripWpx + dragAmount)
-                    )
+                    val newT = msOfContent(contentOfMs(currentEndMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
+                    currentOnRangeChanged(currentStartMs, newT)
+                    currentOnScrub(newT)
+                    panViewportTo(
+                        contentX = contentOfMs(newT, stripWpx, zoom, durationMs),
+                        handleScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX,
+                        stripWpx = stripWpx,
+                        zoom = zoom,
+                        edgeMarginPx = edgeMarginPx
+                    ) { scrollX = it }
                 }
             )
+
+            // 缩放倍率指示
+            if (zoom > 1.01f) {
+                Text(
+                    String.format(Locale.US, "%.1fx", zoom),
+                    fontSize = 10.sp,
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(50))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
         }
+
+        // 拖动把手时的当前帧浮层（跟随把手，Popup 悬浮不占布局空间）
+        val anchorScreenX = when (activeHandle) {
+            0 -> selLeftScreen
+            1 -> selRightScreen
+            else -> null
+        }
+        if (anchorScreenX != null) {
+            val bubbleWpx = with(density) { 132.dp.toPx() }
+            val bx = (anchorScreenX - bubbleWpx / 2)
+                .coerceIn(0f, (stripWpx - bubbleWpx).coerceAtLeast(0f))
+            val offsetY = with(density) { -106.dp.toPx() }.roundToInt()
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = IntOffset(bx.roundToInt(), offsetY),
+                properties = PopupProperties(focusable = false)
+            ) {
+                ClipFrameBubble(frame = previewFrame, timeMs = previewTimeMs)
+            }
+        }
+    }
+}
+
+/** 时间 → 内容像素（zoom 缩放后的时间轴宽度） */
+private fun contentOfMs(ms: Long, stripWpx: Float, zoom: Float, durationMs: Long): Float =
+    ms * stripWpx * zoom / durationMs.coerceAtLeast(1L)
+
+/** 内容像素 → 时间 */
+private fun msOfContent(px: Float, stripWpx: Float, zoom: Float, durationMs: Long): Long =
+    (px / (stripWpx * zoom) * durationMs).roundToLong().coerceIn(0L, durationMs)
+
+/** 拖把手到边缘时自动平移视口，保证长视频放大后也能继续拖 */
+private inline fun panViewportTo(
+    contentX: Float,
+    handleScreenX: Float,
+    stripWpx: Float,
+    zoom: Float,
+    edgeMarginPx: Float,
+    setScroll: (Float) -> Unit
+) {
+    val maxScroll = (stripWpx * zoom - stripWpx).coerceAtLeast(0f)
+    if (handleScreenX > stripWpx - edgeMarginPx) {
+        setScroll((contentX - (stripWpx - edgeMarginPx)).coerceIn(0f, maxScroll))
+    } else if (handleScreenX < edgeMarginPx) {
+        setScroll((contentX - edgeMarginPx).coerceIn(0f, maxScroll))
+    }
+}
+
+/** 当前帧预览浮层 */
+@Composable
+private fun ClipFrameBubble(frame: ImageBitmap?, timeMs: Long) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .shadow(10.dp, RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(10.dp))
+                .size(width = 132.dp, height = 76.dp)
+                .background(Color(0xFF14141A))
+                .border(1.5.dp, Color.White, RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (frame != null) {
+                Image(
+                    bitmap = frame,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                CircularProgressIndicator(
+                    color = iOSBlue,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            formatClipTime(timeMs),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color.Black.copy(alpha = 0.6f))
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+        )
     }
 }
 
