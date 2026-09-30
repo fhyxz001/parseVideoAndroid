@@ -131,7 +131,7 @@ gradle :app:assembleDebug
 
 项目内置 GitHub Actions 工作流 `.github/workflows/build-release.yml`：
 
-- **普通 push / PR**：构建 Debug APK 并上传 artifact
+- **普通 push / PR**：构建 Release APK 并上传 artifact（CI 无 Keystore，自动回退 debug 签名，可直接安装）
 - **tag（v1.2.3）**：解码 Keystore，构建签名 Release APK，自动创建 GitHub Release
 
 ## 已知限制
