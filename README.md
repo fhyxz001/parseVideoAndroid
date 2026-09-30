@@ -87,18 +87,63 @@ app/src/main/java/com/videoparser/app/
 5. 点击 **剪辑下载**，在时间轴上选好起止时间后点击 **剪辑并下载**，只下载所选片段
 6. 点击封面，可保存封面图；点击标题 / 作者名可复制对应文字
 
-## 服务器设置
+## 服务器与解析服务（重要）
 
-默认解析服务器地址硬编码于 `VideoApi.kt`：
+App 本身只负责「解析结果的展示与下载」，**链接解析能力完全来自后端服务**：开源项目 [parse-video-py](https://github.com/wujunwei928/parse-video-py)（MIT 协议，支持抖音、快手、小红书、哔哩哔哩、微博等 25 个视频平台与多个图集平台）。
+
+App 调用的是该服务的这个接口：
+
+```
+GET {服务器地址}/video/share/url/parse?url=<短视频分享链接>
+```
+
+返回视频直链、封面、标题与作者信息。**因此服务器地址必须是（你自己）部署好的 parse-video-py 服务**，填其他地址无法完成解析。
+
+### 默认服务器
+
+内置默认地址硬编码于 `VideoApi.kt`：
 
 ```
 http://122.51.115.245:8888
 ```
 
-如需更换服务器：
+这是作者的公共实例，仅供快速体验，随时可能限流或失效，**不建议长期依赖**。
+
+### 自建解析服务（推荐）
+
+想要长期稳定使用，建议自行部署 parse-video-py，然后在 App 里把服务器地址改成自己的部署地址。
+
+**方式一：Docker（最简单）**
+
+```bash
+docker pull wujunwei928/parse-video-py
+docker run -d -p 8000:8000 wujunwei928/parse-video-py
+```
+
+**方式二：本地 / 服务器直接运行**
+
+```bash
+git clone https://github.com/wujunwei928/parse-video-py
+cd parse-video-py
+uv venv && uv pip install -e ".[all]"
+uvicorn parse_video_py.web:app --host 0.0.0.0 --port 8000
+```
+
+或使用其 CLI：`parse-video-py serve --port 8000`。
+
+**常用可选配置**（parse-video-py 的环境变量）：
+
+| 环境变量 | 说明 |
+|----------|------|
+| `PARSE_VIDEO_USERNAME` / `PARSE_VIDEO_PASSWORD` | 开启 Basic Auth（不设置则不开启） |
+| `PARSE_VIDEO_PROXY` | 服务出站代理，解析境外平台（如 Twitter/X）时有用 |
+
+> 提示：parse-video-py 的解析成功率依赖目标平台的接口策略，如遇个别链接失败，可到该项目 issue 反馈；建议使用 App 内的分享链接而非网页版链接。
+
+### 在 App 中切换服务器
 
 1. 点击首页右上角 **设置**
-2. 输入新的服务器地址（需以 `http://` 或 `https://` 开头）
+2. 输入你的服务器地址（需以 `http://` 或 `https://` 开头，例如 `http://192.168.1.100:8000`）
 3. 点击 **保存**，地址将持久化到本地
 4. 点击 **恢复默认** 可重置为内置默认地址
 

@@ -985,17 +985,13 @@ fun ClipDownloadButton(onClipClicked: () -> Unit) {
         shadowColor = Color.Transparent,
         contentColor = iOSBlue
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("✂", fontSize = 14.sp, color = iOSBlue)
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "剪辑下载",
-                color = iOSBlue,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.25.sp
-            )
-        }
+        Text(
+            "剪辑下载",
+            color = iOSBlue,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.25.sp
+        )
     }
 }
 
