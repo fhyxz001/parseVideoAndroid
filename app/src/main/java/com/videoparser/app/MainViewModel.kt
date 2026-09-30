@@ -1,9 +1,12 @@
 package com.videoparser.app
 
 import android.app.Application
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -23,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -54,20 +58,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var clipThumbs by mutableStateOf<List<ImageBitmap?>>(emptyList())
     var clipThumbsLoading by mutableStateOf(false)
 
-    // 拖动把手时的当前帧预览
-    var clipPreviewFrame by mutableStateOf<ImageBitmap?>(null)
-    var clipPreviewTimeMs by mutableLongStateOf(0L)
+    // 首帧/尾帧预览
+    var clipStartFrame by mutableStateOf<ImageBitmap?>(null)
+    var clipEndFrame by mutableStateOf<ImageBitmap?>(null)
+
+    // 帧图片保存确认弹窗
+    var showFrameSaveDialog by mutableStateOf(false)
+    var frameSaveIsStart by mutableStateOf(true)
+    var isSavingFrame by mutableStateOf(false)
 
     private var clipProbe: ClipProbe? = null
     private var clipProbeKey: String? = null
     private var clipJob: Job? = null
     private var clipThumbsKey: String? = null
 
-    // 取帧专用（单实例复用，避免每次 setDataSource 重新建连）
-    private var scrubRetriever: MediaMetadataRetriever? = null
-    private var scrubUrl: String? = null
-    private var pendingScrubMs: Long? = null
-    private val scrubMutex = Mutex()
+    // 取帧专用（单实例复用，避免每次 setDataSource 重新建连；串行取帧防止并发崩溃）
+    private var frameRetriever: MediaMetadataRetriever? = null
+    private var frameUrl: String? = null
+    private var pendingStartMs: Long? = null
+    private var pendingEndMs: Long? = null
+    private var lastLoadedStartMs = Long.MIN_VALUE
+    private var lastLoadedEndMs = Long.MIN_VALUE
+    private val frameMutex = Mutex()
 
     val toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val copyEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -148,6 +160,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ParseResult.Error -> toast(result.message)
             }
             isParsing = false
+        }
+    }
+
+    /**
+     * 「粘贴并解析」按钮：输入框有内容时以输入框为准直接解析；
+     * 输入框为空时读取剪贴板链接，填入后解析。
+     */
+    fun pasteAndParse() {
+        if (videoUrl.isNotBlank()) {
+            parse()
+            return
+        }
+        val cm = getApplication<Application>()
+            .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = cm.primaryClip?.getItemAt(0)?.text?.toString()
+        onPasted(text) // 填入输入框（剪贴板为空时内部会 toast 提示）
+        if (videoUrl.isNotBlank()) {
+            parse()
         }
     }
 
@@ -250,7 +280,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /* ═════════════════════ 剪辑 ═════════════════════ */
 
     private fun resetClipState() {
-        releaseScrub()
+        releaseFrameRetriever()
         clipProbe = null
         clipProbeKey = null
         clipThumbsKey = null
@@ -263,6 +293,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         isClipping = false
         clipPercent = 0
         clipPhaseText = ""
+        showFrameSaveDialog = false
+        isSavingFrame = false
     }
 
     fun openClipPage() {
@@ -277,7 +309,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissClipPage() {
         if (isClipping) toast("剪辑仍在后台进行，完成后会提示")
-        releaseScrub()
+        releaseFrameRetriever()
         showClipPage = false
     }
 
@@ -397,82 +429,137 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ClipPhase.SAVING -> "正在保存到相册..."
     }
 
-    /* ══════════════ 拖动把手时的当前帧预览 ══════════════ */
+    /* ══════════════ 首帧/尾帧预览取帧 ══════════════ */
 
-    /** 开始拖动把手：确保取帧器就绪并加载第一帧 */
-    fun beginClipScrub(timeMs: Long) {
-        clipPreviewTimeMs = timeMs
-        pendingScrubMs = timeMs
-        val url = parseData?.videoUrl?.trim() ?: return
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) { ensureScrubRetriever(url) }
-            runScrubLoader()
+    /**
+     * 开始/结束时间变化后请求对应帧（拖动、步进、点击都会触发）。
+     * 后台串行加载并自动合并：拖动过程中始终只取最新时间，不堆积请求。
+     */
+    fun requestClipFrame(isStart: Boolean, timeMs: Long) {
+        if (isStart) {
+            if (timeMs == lastLoadedStartMs || timeMs == pendingStartMs) return
+            pendingStartMs = timeMs
+        } else {
+            if (timeMs == lastLoadedEndMs || timeMs == pendingEndMs) return
+            pendingEndMs = timeMs
         }
+        runClipFrameLoader()
     }
 
-    /** 拖动中：更新目标时间，由后台加载器按最新时间取帧（自动节流合并） */
-    fun updateClipScrub(timeMs: Long) {
-        clipPreviewTimeMs = timeMs
-        pendingScrubMs = timeMs
-        runScrubLoader()
-    }
-
-    fun endClipScrub() {
-        // 保留最后一帧用于下次拖动前展示，取帧器也复用
-    }
-
-    /** 串行取帧循环：始终取 pendingScrubMs 中最新的时间，避免并发使用同一 retriever */
-    private fun runScrubLoader() {
-        viewModelScope.launch {
-            scrubMutex.withLock {
+    /** 串行取帧循环：同一时刻只允许一个 getFrameAtTime 在跑 */
+    private fun runClipFrameLoader() {
+        val url = parseData?.videoUrl?.trim() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            frameMutex.withLock {
                 while (true) {
-                    val target = pendingScrubMs ?: break
-                    pendingScrubMs = null
-                    val retriever = scrubRetriever ?: break
-                    val bmp = withContext(Dispatchers.IO) {
-                        try {
-                            retriever.getFrameAtTime(
-                                target * 1000,
-                                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                            )
-                        } catch (e: Exception) {
-                            null
+                    val startTarget = pendingStartMs
+                    val endTarget = pendingEndMs
+                    if (startTarget == null && endTarget == null) break
+                    val retriever = ensureFrameRetriever(url) ?: break
+                    if (startTarget != null) {
+                        pendingStartMs = null
+                        val bmp = getFrame(retriever, startTarget)
+                        // 加载期间有更新的请求则丢弃旧结果，避免回闪过期帧
+                        if (bmp != null && pendingStartMs == null) {
+                            clipStartFrame = scaleDown(bmp, PREVIEW_TARGET_WIDTH).asImageBitmap()
+                            lastLoadedStartMs = startTarget
                         }
                     }
-                    if (bmp != null) {
-                        clipPreviewFrame = scaleDown(bmp, PREVIEW_TARGET_WIDTH)?.asImageBitmap()
+                    if (endTarget != null) {
+                        pendingEndMs = null
+                        val bmp = getFrame(retriever, endTarget)
+                        if (bmp != null && pendingEndMs == null) {
+                            clipEndFrame = scaleDown(bmp, PREVIEW_TARGET_WIDTH).asImageBitmap()
+                            lastLoadedEndMs = endTarget
+                        }
                     }
                 }
             }
         }
     }
 
-    private fun ensureScrubRetriever(url: String) {
-        if (scrubRetriever != null && scrubUrl == url) return
-        releaseScrub()
+    private suspend fun getFrame(retriever: MediaMetadataRetriever, timeMs: Long): Bitmap? =
+        withContext(Dispatchers.IO) {
+            try {
+                retriever.getFrameAtTime(timeMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /** 返回按 URL 复用的取帧器，失败返回 null */
+    private fun ensureFrameRetriever(url: String): MediaMetadataRetriever? {
+        if (frameRetriever != null && frameUrl == url) return frameRetriever
+        releaseFrameRetriever()
         try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(url, HashMap<String, String>())
-            scrubRetriever = retriever
-            scrubUrl = url
+            frameRetriever = retriever
+            frameUrl = url
+            return retriever
         } catch (e: Exception) {
-            scrubRetriever = null
+            frameRetriever = null
+            return null
         }
     }
 
-    private fun releaseScrub() {
-        pendingScrubMs = null
-        val retriever = scrubRetriever
-        scrubRetriever = null
-        scrubUrl = null
-        clipPreviewFrame = null
-        clipPreviewTimeMs = 0L
+    private fun releaseFrameRetriever() {
+        pendingStartMs = null
+        pendingEndMs = null
+        lastLoadedStartMs = Long.MIN_VALUE
+        lastLoadedEndMs = Long.MIN_VALUE
+        val retriever = frameRetriever
+        frameRetriever = null
+        frameUrl = null
+        clipStartFrame = null
+        clipEndFrame = null
         retriever?.let {
             try {
                 it.release()
             } catch (e: Exception) {
             }
         }
+    }
+
+    /** 点击预览图：弹出保存确认（帧未就绪时提示等待） */
+    fun onClipFrameClicked(isStart: Boolean) {
+        val frame = if (isStart) clipStartFrame else clipEndFrame
+        if (frame == null) {
+            toast("画面加载中，请稍候")
+            return
+        }
+        frameSaveIsStart = isStart
+        showFrameSaveDialog = true
+    }
+
+    fun dismissFrameSaveDialog() {
+        showFrameSaveDialog = false
+    }
+
+    fun confirmSaveFrame() {
+        if (isSavingFrame) return
+        val bitmap = (if (frameSaveIsStart) clipStartFrame else clipEndFrame)?.asAndroidBitmap() ?: return
+        showFrameSaveDialog = false
+        isSavingFrame = true
+        viewModelScope.launch {
+            val title = parseData?.title?.ifBlank { "video" } ?: "video"
+            val fileName = frameFileName(title, frameSaveIsStart, if (frameSaveIsStart) clipStartMs else clipEndMs)
+            val ok = VideoDownloader.saveBitmapToGallery(getApplication(), bitmap, fileName)
+            isSavingFrame = false
+            toast(if (ok) "已保存到相册" else "保存失败")
+        }
+    }
+
+    /** 帧图片文件名：标题_剪辑首帧/尾帧_HHmmss.jpg */
+    private fun frameFileName(title: String, isStart: Boolean, timeMs: Long): String {
+        val base = title.replace(Regex("[\\\\/:*?\"<>|]"), "").ifBlank { "video" }.take(60)
+        val side = if (isStart) "首帧" else "尾帧"
+        val totalSec = timeMs.coerceAtLeast(0L) / 1000
+        val t = String.format(
+            Locale.US, "%02d%02d%02d",
+            totalSec / 3600, (totalSec % 3600) / 60, totalSec % 60
+        )
+        return "${base}_剪辑${side}_$t.jpg"
     }
 
     /** 加载时间轴缩略图（3 路并行取关键帧，逐张更新） */

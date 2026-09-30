@@ -2,6 +2,7 @@ package com.videoparser.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -234,6 +235,54 @@ object VideoDownloader {
             false
         }
     }
+
+    /** 将内存中的 Bitmap 以 JPEG 保存到相册 Pictures 目录（剪辑帧预览保存使用） */
+    suspend fun saveBitmapToGallery(context: Context, bitmap: Bitmap, fileName: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val resolver = context.contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        ?: return@withContext false
+                    try {
+                        val compressed = resolver.openOutputStream(uri)
+                            ?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                            ?: return@withContext false
+                        if (!compressed) {
+                            resolver.delete(uri, null, null)
+                            return@withContext false
+                        }
+                        values.clear()
+                        values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        resolver.update(uri, values, null, null)
+                        true
+                    } catch (e: Exception) {
+                        resolver.delete(uri, null, null)
+                        false
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                    if (!dir.exists()) dir.mkdirs()
+                    val file = File(dir, fileName)
+                    try {
+                        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                        true
+                    } catch (e: Exception) {
+                        file.delete()
+                        false
+                    }
+                }
+            } catch (e: Exception) {
+                false
+            }
+        }
 
     suspend fun downloadImage(
         context: Context,
