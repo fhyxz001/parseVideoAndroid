@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
@@ -69,6 +70,93 @@ object VideoDownloader {
             }
         } catch (e: Exception) {
             -1L
+        }
+    }
+
+    /**
+     * 由调用方直接向相册输出流写入视频数据（剪辑功能使用）。
+     * writer 抛异常或返回失败时会清理未完成的相册条目。
+     */
+    suspend fun saveVideoToGallery(
+        context: Context,
+        fileName: String,
+        writer: (OutputStream) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM)
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return@withContext false
+                try {
+                    resolver.openOutputStream(uri)?.use { output -> writer(output) } ?: return@withContext false
+                    values.clear()
+                    values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    true
+                } catch (e: Exception) {
+                    resolver.delete(uri, null, null)
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    false
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, fileName)
+                try {
+                    file.outputStream().use { output -> writer(output) }
+                    true
+                } catch (e: Exception) {
+                    file.delete()
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 全量下载到指定缓存文件（剪辑降级路径使用），支持协程取消 */
+    suspend fun downloadWholeToFile(
+        videoUrl: String,
+        dest: File,
+        onProgress: (downloaded: Long, total: Long) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        val context = coroutineContext
+        try {
+            val request = Request.Builder().url(videoUrl).get().build()
+            VideoApi.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val body = response.body ?: return@withContext false
+                val total = body.contentLength()
+                dest.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var downloaded = 0L
+                    body.byteStream().use { input ->
+                        while (true) {
+                            context.ensureActive()
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            downloaded += n
+                            onProgress(downloaded, total)
+                        }
+                    }
+                }
+                true
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            dest.delete()
+            throw e
+        } catch (e: Exception) {
+            dest.delete()
+            false
         }
     }
 
