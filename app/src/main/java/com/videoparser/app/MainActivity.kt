@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -984,13 +985,17 @@ fun ClipDownloadButton(onClipClicked: () -> Unit) {
         shadowColor = Color.Transparent,
         contentColor = iOSBlue
     ) {
-        Text(
-            "剪辑下载",
-            color = iOSBlue,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.25.sp
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("✂", fontSize = 14.sp, color = iOSBlue)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "剪辑下载",
+                color = iOSBlue,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.25.sp
+            )
+        }
     }
 }
 
@@ -1018,15 +1023,31 @@ fun ClipSheetContent(vm: MainViewModel) {
             .padding(horizontal = 20.dp)
             .padding(bottom = 28.dp)
     ) {
+        // ── 拖拽把手 ──
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 10.dp, bottom = 8.dp)
+                .size(width = 36.dp, height = 4.dp)
+                .background(iOSTertiary, RoundedCornerShape(2.dp))
+        )
         // ── Header ──
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "剪辑下载",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = iOSLabel,
-                letterSpacing = (-0.3).sp
-            )
+            Column {
+                Text(
+                    "剪辑下载",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = iOSLabel,
+                    letterSpacing = (-0.3).sp
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "拖动滑块，选择要保留的片段",
+                    fontSize = 12.sp,
+                    color = iOSSecondary
+                )
+            }
             Spacer(Modifier.weight(1f))
             Box(
                 modifier = Modifier
@@ -1043,7 +1064,7 @@ fun ClipSheetContent(vm: MainViewModel) {
                 Text("✕", fontSize = 12.sp, color = iOSSecondary)
             }
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(16.dp))
 
         when {
             vm.clipProbing -> ClipProbingView()
@@ -1055,19 +1076,18 @@ fun ClipSheetContent(vm: MainViewModel) {
 
 @Composable
 private fun ClipProbingView() {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 36.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 44.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         CircularProgressIndicator(
             color = iOSBlue,
             strokeWidth = 2.5.dp,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(26.dp)
         )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.height(14.dp))
         Text("正在获取视频信息...", color = iOSSecondary, fontSize = 14.sp)
     }
 }
@@ -1112,9 +1132,9 @@ private fun ClipEditor(vm: MainViewModel) {
         enabled = !vm.isClipping,
         onRangeChanged = { s, e -> vm.setClipRange(s, e) }
     )
-    Spacer(Modifier.height(6.dp))
+    Spacer(Modifier.height(10.dp))
 
-    // ── 时间读数 ──
+    // ── 时间读数：两端时间 + 中间时长药丸 ──
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1127,12 +1147,7 @@ private fun ClipEditor(vm: MainViewModel) {
             color = iOSLabel,
             fontFamily = FontFamily.Monospace
         )
-        Text(
-            "已选 ${formatClipTime(selected)}",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = iOSBlue
-        )
+        DurationPill("已选 ${formatClipTime(selected)}")
         Text(
             formatClipTime(endMs),
             fontSize = 13.sp,
@@ -1141,7 +1156,7 @@ private fun ClipEditor(vm: MainViewModel) {
             fontFamily = FontFamily.Monospace
         )
     }
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(14.dp))
 
     // ── 微调 ──
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1162,15 +1177,32 @@ private fun ClipEditor(vm: MainViewModel) {
             enabled = !vm.isClipping
         )
     }
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(14.dp))
 
-    // ── 信息 ──
-    ClipInfoCard(
-        durationMs = duration,
-        estimatedBytes = estimatedBytes,
-        snapStartMs = if (snapped.first != startMs) snapped.first else -1L,
-        snapEndMs = if (snapped.second != endMs) snapped.second else -1L
-    )
+    // ── 元信息（轻量居中文本，替代信息卡片） ──
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            if (estimatedBytes > 0) {
+                "原视频 ${formatClipTime(duration)}  ·  预计约 ${formatFileSize(estimatedBytes)}"
+            } else {
+                "原视频 ${formatClipTime(duration)}"
+            },
+            fontSize = 12.sp,
+            color = iOSSecondary
+        )
+        if (snapped.first != startMs || snapped.second != endMs) {
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "将按关键帧对齐至 ${formatClipTime(snapped.first)} ~ ${formatClipTime(snapped.second)}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFFFF9500)
+            )
+        }
+    }
     Spacer(Modifier.height(16.dp))
 
     // ── 操作区 ──
@@ -1184,14 +1216,18 @@ private fun ClipEditor(vm: MainViewModel) {
             shadowColor = iOSGreen.copy(alpha = 0.3f),
             contentColor = Color.White
         ) {
-            Text(
-                if (estimatedBytes > 0) "剪辑并下载（约 ${formatFileSize(estimatedBytes)}）"
-                else "剪辑并下载",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.25.sp
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("✂", fontSize = 14.sp, color = Color.White)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (estimatedBytes > 0) "剪辑并下载（约 ${formatFileSize(estimatedBytes)}）"
+                    else "剪辑并下载",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.25.sp
+                )
+            }
         }
     } else {
         ClipProgressArea(
@@ -1202,7 +1238,28 @@ private fun ClipEditor(vm: MainViewModel) {
     }
 }
 
-/** 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手 */
+/** 蓝色时长药丸 */
+@Composable
+private fun DurationPill(text: String) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color(0xFFE9F2FF))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("✂", fontSize = 11.sp, color = iOSBlue)
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = iOSBlue
+        )
+    }
+}
+
+/** 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手（参考剪辑 App 的厚重白把手） */
 @Composable
 private fun ClipTimelineStrip(
     durationMs: Long,
@@ -1217,16 +1274,18 @@ private fun ClipTimelineStrip(
     val currentStartMs by rememberUpdatedState(startMs)
     val currentEndMs by rememberUpdatedState(endMs)
     val currentOnRangeChanged by rememberUpdatedState(onRangeChanged)
+    var activeHandle by remember { mutableStateOf<Int?>(null) }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(76.dp)
+            .height(88.dp)
     ) {
         val stripW = maxWidth
         val stripWpx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val startFrac = (startMs.toFloat() / durationMs).coerceIn(0f, 1f)
         val endFrac = (endMs.toFloat() / durationMs).coerceIn(0f, 1f)
-        val handleW = 20.dp
+        val handleW = 14.dp
         val selStart = stripW * startFrac
         val selWidth = (stripW * (endFrac - startFrac)).coerceAtLeast(handleW)
 
@@ -1235,8 +1294,8 @@ private fun ClipTimelineStrip(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF1C1C1E))
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF14141A))
                 .then(
                     if (enabled) Modifier.pointerInput(durationMs) {
                         // 点击时间轴：把手就近移动
@@ -1253,13 +1312,7 @@ private fun ClipTimelineStrip(
             // 缩略图
             Row(modifier = Modifier.fillMaxSize()) {
                 if (thumbs.isEmpty()) {
-                    Box(
-                        Modifier.fillMaxSize().background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFF2C2C2E), Color(0xFF3A3A3C), Color(0xFF2C2C2E))
-                            )
-                        )
-                    )
+                    PulsingPlaceholder(modifier = Modifier.fillMaxSize())
                 } else {
                     thumbs.forEach { thumb ->
                         Box(
@@ -1282,19 +1335,28 @@ private fun ClipTimelineStrip(
                 }
             }
 
+            // 选区内轻微提亮
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .absoluteOffset { IntOffset(selStart.toPx().roundToInt(), 0) }
+                    .width(selWidth)
+                    .background(Color.White.copy(alpha = 0.08f))
+            )
+
             // 选区外的压暗层
             Box(
                 Modifier
                     .fillMaxHeight()
                     .width(selStart)
-                    .background(Color.Black.copy(alpha = 0.55f))
+                    .background(Color.Black.copy(alpha = 0.5f))
             )
             Box(
                 Modifier
                     .fillMaxHeight()
                     .align(Alignment.CenterEnd)
                     .width(stripW - selStart - selWidth)
-                    .background(Color.Black.copy(alpha = 0.55f))
+                    .background(Color.Black.copy(alpha = 0.5f))
             )
 
             // 选区边框
@@ -1303,8 +1365,7 @@ private fun ClipTimelineStrip(
                     .fillMaxHeight()
                     .absoluteOffset { IntOffset(selStart.toPx().roundToInt(), 0) }
                     .width(selWidth)
-                    .clip(RoundedCornerShape(8.dp))
-                    .border(2.dp, Color.White, RoundedCornerShape(8.dp))
+                    .border(2.dp, Color.White, RoundedCornerShape(10.dp))
             )
 
             // 左把手
@@ -1316,9 +1377,12 @@ private fun ClipTimelineStrip(
                     }
                     .width(handleW),
                 enabled = enabled,
+                active = activeHandle == 0,
                 onDragStart = {
+                    activeHandle = 0
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 },
+                onDragEnd = { activeHandle = null },
                 onDrag = { dragAmount ->
                     currentOnRangeChanged(
                         msAt(startFrac * stripWpx + dragAmount),
@@ -1335,9 +1399,12 @@ private fun ClipTimelineStrip(
                     }
                     .width(handleW),
                 enabled = enabled,
+                active = activeHandle == 1,
                 onDragStart = {
+                    activeHandle = 1
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 },
+                onDragEnd = { activeHandle = null },
                 onDrag = { dragAmount ->
                     currentOnRangeChanged(
                         currentStartMs,
@@ -1349,23 +1416,75 @@ private fun ClipTimelineStrip(
     }
 }
 
+/** 缩略图未就绪时的呼吸占位动画 */
+@Composable
+private fun PulsingPlaceholder(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "thumbPulse")
+    val alpha by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 0.5f,
+        animationSpec = infiniteRepeatable(
+            tween(900, easing = LinearEasing),
+            RepeatMode.Reverse
+        ),
+        label = "thumbPulseAlpha"
+    )
+    Box(
+        modifier
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF232329), Color(0xFF33333C), Color(0xFF232329))
+                )
+            )
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { this.alpha = alpha }
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color.Transparent, Color.White.copy(alpha = 0.35f), Color.Transparent)
+                    )
+                )
+        )
+    }
+}
+
+/** 时间轴把手：白色厚重圆角条 + 中央凹槽，拖拽时轻微放大 */
 @Composable
 private fun ClipHandle(
     modifier: Modifier,
     enabled: Boolean,
+    active: Boolean,
     onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
     onDrag: (Float) -> Unit
 ) {
     val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
     val currentOnDrag by rememberUpdatedState(onDrag)
+    val scale by animateFloatAsState(
+        if (active) 1.18f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "handleScale"
+    )
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color.White.copy(alpha = 0.92f))
+            .shadow(
+                elevation = if (active) 8.dp else 4.dp,
+                shape = RoundedCornerShape(5.dp),
+                ambientColor = Color.Black.copy(alpha = 0.4f),
+                spotColor = Color.Black.copy(alpha = 0.4f)
+            )
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(5.dp))
+            .background(Color.White)
             .then(
                 if (enabled) Modifier.pointerInput(Unit) {
                     detectHorizontalDragGestures(
-                        onDragStart = { currentOnDragStart() }
+                        onDragStart = { currentOnDragStart() },
+                        onDragEnd = { currentOnDragEnd() },
+                        onDragCancel = { currentOnDragEnd() }
                     ) { change, dragAmount ->
                         change.consume()
                         currentOnDrag(dragAmount)
@@ -1374,19 +1493,16 @@ private fun ClipHandle(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            repeat(3) {
-                Box(
-                    Modifier
-                        .padding(vertical = 2.dp)
-                        .size(width = 2.dp, height = 12.dp)
-                        .background(Color(0xFF1C1C1E).copy(alpha = 0.55f), RoundedCornerShape(1.dp))
-                )
-            }
-        }
+        // 中央凹槽
+        Box(
+            Modifier
+                .size(width = 2.dp, height = 20.dp)
+                .background(Color(0xFF1C1C1E).copy(alpha = 0.4f), RoundedCornerShape(1.dp))
+        )
     }
 }
 
+/** 起止时间微调卡片：标签 + 大号时间 + ±1秒 步进药丸 */
 @Composable
 private fun TimeStepperCard(
     modifier: Modifier = Modifier,
@@ -1396,92 +1512,49 @@ private fun TimeStepperCard(
     onPlus: () -> Unit,
     enabled: Boolean
 ) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF5F5FA))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
-            Text(label, fontSize = 11.sp, color = iOSSecondary, fontWeight = FontWeight.Medium)
-            Text(
-                timeText,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = iOSLabel,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        StepperButton("−", enabled, onMinus)
-        Spacer(Modifier.width(6.dp))
-        StepperButton("+", enabled, onPlus)
-    }
-}
-
-@Composable
-private fun StepperButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(28.dp)
-            .clip(CircleShape)
-            .background(if (enabled) iOSBlue.copy(alpha = 0.12f) else Color(0xFFE5E5EA))
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            symbol,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (enabled) iOSBlue else iOSTertiary
-        )
-    }
-}
-
-@Composable
-private fun ClipInfoCard(
-    durationMs: Long,
-    estimatedBytes: Long,
-    snapStartMs: Long,
-    snapEndMs: Long
-) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
             .background(Color(0xFFF5F5FA))
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
-        InfoRow("原视频", formatClipTime(durationMs))
-        if (estimatedBytes > 0) {
-            Spacer(Modifier.height(4.dp))
-            InfoRow("预计下载", "约 ${formatFileSize(estimatedBytes)}")
-        }
-        if (snapStartMs >= 0 || snapEndMs >= 0) {
-            Spacer(Modifier.height(4.dp))
-            InfoRow(
-                "将按关键帧对齐",
-                "${formatClipTime(if (snapStartMs >= 0) snapStartMs else 0L)} - " +
-                    formatClipTime(if (snapEndMs >= 0) snapEndMs else 0L),
-                valueColor = Color(0xFFFF9500)
-            )
+        Text(label, fontSize = 11.sp, color = iOSSecondary, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            timeText,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = iOSLabel,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(8.dp))
+        Row {
+            StepperPill("−1秒", enabled, onMinus)
+            Spacer(Modifier.width(8.dp))
+            StepperPill("+1秒", enabled, onPlus)
         }
     }
 }
 
 @Composable
-private fun InfoRow(label: String, value: String, valueColor: Color = iOSLabel) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+private fun StepperPill(text: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (enabled) Color.White else Color(0xFFEDEDF2))
+            .border(
+                0.5.dp,
+                if (enabled) iOSBlue.copy(alpha = 0.35f) else Color.Transparent,
+                RoundedCornerShape(50)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
     ) {
-        Text(label, fontSize = 12.sp, color = iOSSecondary)
         Text(
-            value,
+            text,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
-            color = valueColor
+            color = if (enabled) iOSBlue else iOSTertiary
         )
     }
 }
@@ -1508,7 +1581,8 @@ private fun ClipProgressArea(
                 "$percent%",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = iOSBlue
+                color = iOSBlue,
+                fontFamily = FontFamily.Monospace
             )
         }
         Spacer(Modifier.height(10.dp))
@@ -1532,21 +1606,31 @@ private fun ClipProgressArea(
                     .background(Brush.horizontalGradient(listOf(iOSBlue, iOSBlueLight)))
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "取消剪辑",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFFF3B30),
+        Spacer(Modifier.height(14.dp))
+        // 取消：居中描边药丸
+        Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
+                .clip(RoundedCornerShape(50))
+                .border(
+                    1.dp,
+                    Color(0xFFFF3B30).copy(alpha = 0.45f),
+                    RoundedCornerShape(50)
+                )
                 .clickable(
                     interactionSource = null,
                     indication = null,
                     onClick = onCancel
                 )
-                .padding(8.dp)
-        )
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+        ) {
+            Text(
+                "取消剪辑",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFFF3B30)
+            )
+        }
     }
 }
 
