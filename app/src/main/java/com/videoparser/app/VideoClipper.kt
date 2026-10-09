@@ -105,11 +105,17 @@ object VideoClipper {
                 val located = tail?.let { Mp4FileLocator.locateMoovInTail(it, tailStart, fileSize) }
                 if (tail != null && located != null) {
                     val (moovStart, moovSize) = located
-                    val moovBytes = fetchExactRange(url, moovStart, moovSize)
+                    // moov 已完整落在尾部缓冲内时直接切片，省去一次数 MB 的重复下载
+                    val moovBytes = if (moovStart + moovSize <= tailStart + tail.size) {
+                        val from = (moovStart - tailStart).toInt()
+                        Mp4BoxIo.copy(tail, from, (from + moovSize).toInt())
+                    } else {
+                        fetchExactRange(url, moovStart, moovSize)
+                    }
                     if (moovBytes != null) {
                         return@withContext try {
                             val parsed = Mp4Parser.parse(
-                                Mp4FileLocator.scanHead(tail).ftypBox ?: scan.ftypBox ?: ByteArray(0),
+                                scan.ftypBox ?: ByteArray(0),
                                 moovBytes
                             )
                             toReady(parsed, fileSize)
@@ -421,7 +427,7 @@ object VideoClipper {
         }
     }
 
-    /** Range 下载片段到文件（服务器若忽略 Range 返回 200，则返回 false 走降级） */
+    /** Range 下载片段到文件：大片段优先多线程分片，失败（含服务器不支持 Range）回退单流探测 */
     private suspend fun downloadRangeToFile(
         url: String,
         rangeStart: Long,
@@ -429,6 +435,13 @@ object VideoClipper {
         dest: File,
         onDownloaded: (Long) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
+        if (VideoDownloader.downloadRangeToFile(
+                url, rangeStart, rangeEndExclusive, dest
+            ) { downloaded, _ -> onDownloaded(downloaded) }
+        ) {
+            return@withContext true
+        }
+        dest.delete()
         val context = coroutineContext
         try {
             val request = Request.Builder()

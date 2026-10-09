@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -458,7 +459,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val retriever = ensureFrameRetriever(url) ?: break
                     if (startTarget != null) {
                         pendingStartMs = null
-                        val bmp = getFrame(retriever, startTarget)
+                        val bmp = getFrame(retriever, startTarget, PREVIEW_TARGET_WIDTH)
                         // 加载期间有更新的请求则丢弃旧结果，避免回闪过期帧
                         if (bmp != null && pendingStartMs == null) {
                             clipStartFrame = scaleDown(bmp, PREVIEW_TARGET_WIDTH).asImageBitmap()
@@ -467,7 +468,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (endTarget != null) {
                         pendingEndMs = null
-                        val bmp = getFrame(retriever, endTarget)
+                        val bmp = getFrame(retriever, endTarget, PREVIEW_TARGET_WIDTH)
                         if (bmp != null && pendingEndMs == null) {
                             clipEndFrame = scaleDown(bmp, PREVIEW_TARGET_WIDTH).asImageBitmap()
                             lastLoadedEndMs = endTarget
@@ -478,14 +479,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun getFrame(retriever: MediaMetadataRetriever, timeMs: Long): Bitmap? =
-        withContext(Dispatchers.IO) {
-            try {
+    /** API 27+ 走 getScaledFrameAtTime 边解码边缩放，长视频高分辨率帧可显著提速 */
+    private suspend fun getFrame(
+        retriever: MediaMetadataRetriever,
+        timeMs: Long,
+        targetWidth: Int
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                retriever.getScaledFrameAtTime(
+                    timeMs * 1000,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    targetWidth,
+                    targetWidth
+                )
+            } else {
                 retriever.getFrameAtTime(timeMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-            } catch (e: Exception) {
-                null
             }
+        } catch (e: Exception) {
+            null
         }
+    }
 
     /** 返回按 URL 复用的取帧器，失败返回 null */
     private fun ensureFrameRetriever(url: String): MediaMetadataRetriever? {
@@ -594,16 +608,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 async {
                     val retriever = retrievers[worker]
                     for (i in worker until count step THUMB_WORKERS) {
-                        val posUs = durationMs * 1000 * (i + 0.5) / count
-                        val frame = try {
-                            retriever.getFrameAtTime(
-                                posUs.toLong(),
-                                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                            )
-                        } catch (e: Exception) {
-                            null
-                        }
-                        results[i] = frame?.let { scaleDown(it, THUMB_TARGET_WIDTH) }?.asImageBitmap()
+                        val posMs = (durationMs * (i + 0.5) / count).toLong()
+                        val frame = getFrame(retriever, posMs, THUMB_TARGET_WIDTH)
+                        // API 27+ 已按目标尺寸解码，无需再缩
+                        val scaled =
+                            if (frame != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
+                                scaleDown(frame, THUMB_TARGET_WIDTH)
+                            } else frame
+                        results[i] = scaled?.asImageBitmap()
                         clipThumbs = results.toList() // 逐张刷新占位
                     }
                 }

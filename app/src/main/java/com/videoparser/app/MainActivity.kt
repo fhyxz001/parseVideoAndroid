@@ -1279,12 +1279,13 @@ private fun DurationPill(text: String) {
     }
 }
 
-/** 时间轴最大缩放倍率 */
-private const val MAX_ZOOM = 20f
+/** 时间轴最大缩放倍率：随视频时长自适应，保证放大到顶时视口至少跨约 15 秒，长视频也能精细选段 */
+private fun maxZoomFor(durationMs: Long): Float = (durationMs / 15_000f).coerceIn(20f, 120f)
 
 /**
  * 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手。
  * 支持双指缩放（以手势中心为锚点，放大后单指平移视口、拖把手到边缘自动跟手）。
+ * 选区在屏幕上过窄时（拖动把手或点选触发）自动放大，避免长视频下小选区难以微调。
  */
 @Composable
 private fun ClipTimelineStrip(
@@ -1315,6 +1316,20 @@ private fun ClipTimelineStrip(
         val handleW = 14.dp
         val handleWpx = with(density) { handleW.toPx() }
         val edgeMarginPx = with(density) { 20.dp.toPx() }
+        val maxZoom = maxZoomFor(durationMs)
+
+        // 选区在屏幕上不足 40% 宽时自动放大到约 55%，锚点（anchorScreenX）保持不动，
+        // 解决长视频下小选区把手重叠、难以精确拖动的问题
+        fun autoZoomForNarrowSelection(selStartMs: Long, selEndMs: Long, anchorMs: Long, anchorScreenX: Float) {
+            if (durationMs <= 0L) return
+            val selFrac = (selEndMs - selStartMs).toFloat() / durationMs
+            if (selFrac <= 0f || selFrac * zoom >= 0.4f) return
+            val target = (0.55f / selFrac).coerceIn(zoom, maxZoom)
+            if (target <= zoom * 1.001f) return
+            zoom = target
+            scrollX = (contentOfMs(anchorMs, stripWpx, target, durationMs) - anchorScreenX)
+                .coerceIn(0f, (stripWpx * target - stripWpx).coerceAtLeast(0f))
+        }
 
         val startContentPx = contentOfMs(startMs, stripWpx, zoom, durationMs)
         val endContentPx = contentOfMs(endMs, stripWpx, zoom, durationMs)
@@ -1333,7 +1348,7 @@ private fun ClipTimelineStrip(
                         .pointerInput(durationMs) {
                             detectTransformGestures { centroid, pan, gestureZoom, _ ->
                                 if (gestureZoom != 1f) {
-                                    val newZoom = (zoom * gestureZoom).coerceIn(1f, MAX_ZOOM)
+                                    val newZoom = (zoom * gestureZoom).coerceIn(1f, maxZoom)
                                     val newContentW = stripWpx * newZoom
                                     val tAtCentroid = (centroid.x + scrollX) / (stripWpx * zoom) * durationMs
                                     scrollX = (tAtCentroid / durationMs * newContentW - centroid.x)
@@ -1356,8 +1371,10 @@ private fun ClipTimelineStrip(
                                     val t = msOfContent(offset.x + scrollX, stripWpx, zoom, durationMs)
                                     val distStart = kotlin.math.abs(t - currentStartMs)
                                     val distEnd = kotlin.math.abs(currentEndMs - t)
-                                    if (distStart <= distEnd) currentOnRangeChanged(t, currentEndMs)
-                                    else currentOnRangeChanged(currentStartMs, t)
+                                    val (newStart, newEnd) =
+                                        if (distStart <= distEnd) t to currentEndMs else currentStartMs to t
+                                    currentOnRangeChanged(newStart, newEnd)
+                                    autoZoomForNarrowSelection(newStart, newEnd, t, offset.x)
                                 }
                             )
                         }
@@ -1443,6 +1460,13 @@ private fun ClipTimelineStrip(
                 onDrag = { dragAmount ->
                     val newT = msOfContent(contentOfMs(currentStartMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
                     currentOnRangeChanged(newT, currentEndMs)
+                    // 注意 anchorScreenX 需在 zoom 被修改前求值，保证把手停留在手指原位置
+                    autoZoomForNarrowSelection(
+                        selStartMs = newT,
+                        selEndMs = currentEndMs,
+                        anchorMs = newT,
+                        anchorScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX
+                    )
                     panViewportTo(
                         contentX = contentOfMs(newT, stripWpx, zoom, durationMs),
                         handleScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX,
@@ -1468,6 +1492,12 @@ private fun ClipTimelineStrip(
                 onDrag = { dragAmount ->
                     val newT = msOfContent(contentOfMs(currentEndMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
                     currentOnRangeChanged(currentStartMs, newT)
+                    autoZoomForNarrowSelection(
+                        selStartMs = currentStartMs,
+                        selEndMs = newT,
+                        anchorMs = newT,
+                        anchorScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX
+                    )
                     panViewportTo(
                         contentX = contentOfMs(newT, stripWpx, zoom, durationMs),
                         handleScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX,
@@ -1478,10 +1508,10 @@ private fun ClipTimelineStrip(
                 }
             )
 
-            // 缩放倍率指示
+            // 缩放指示：显示当前视口跨度的视频时长
             if (zoom > 1.01f) {
                 Text(
-                    String.format(Locale.US, "%.1fx", zoom),
+                    "可视 " + formatClipTime((durationMs / zoom).roundToLong()),
                     fontSize = 10.sp,
                     color = Color.White.copy(alpha = 0.85f),
                     fontFamily = FontFamily.Monospace,
