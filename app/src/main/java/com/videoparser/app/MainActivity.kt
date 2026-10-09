@@ -47,12 +47,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -999,6 +1001,19 @@ fun ServerSettingsDialog(
 fun ClipPage(vm: MainViewModel) {
     BackHandler(enabled = vm.showClipPage) { vm.dismissClipPage() }
 
+    // 播放器随剪辑页创建/释放；探测期间即开始预缓冲，探测完成即可出画面
+    val clipPageContext = LocalContext.current
+    val clipPlayer = remember { ClipPlaybackController(clipPageContext) }
+    DisposableEffect(Unit) {
+        onDispose { clipPlayer.release() }
+    }
+    LaunchedEffect(vm.clipVideoUrl, vm.clipPlayerFailed) {
+        if (vm.clipVideoUrl.isNotBlank() && !vm.clipPlayerFailed) {
+            clipPlayer.onError = { vm.clipPlayerFailed = true }
+            clipPlayer.prepare(vm.clipVideoUrl)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1044,7 +1059,7 @@ fun ClipPage(vm: MainViewModel) {
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "拖动滑块，选择要保留的片段",
+                        "播放视频，一键截取选中的片段",
                         fontSize = 12.sp,
                         color = iOSSecondary
                     )
@@ -1062,7 +1077,7 @@ fun ClipPage(vm: MainViewModel) {
                 when {
                     vm.clipProbing -> ClipProbingView()
                     vm.clipDurationMs <= 0 -> ClipUnavailableView()
-                    else -> ClipEditor(vm)
+                    else -> ClipEditor(vm, clipPlayer)
                 }
             }
         }
@@ -1129,28 +1144,55 @@ private fun ClipUnavailableView() {
 }
 
 @Composable
-private fun ClipEditor(vm: MainViewModel) {
+private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
     val duration = vm.clipDurationMs
     val startMs = vm.clipStartMs
     val endMs = vm.clipEndMs
     val selected = (endMs - startMs).coerceAtLeast(0L)
-    val snapped = vm.snappedClipWindow()
     val estimatedBytes = if (vm.videoFileSize > 0 && duration > 0) {
         vm.videoFileSize * selected / duration
     } else 0L
+    val playerMode = !vm.clipPlayerFailed
 
-    // ── 首帧/尾帧预览：随起止时间实时更新 ──
-    ClipFramePreviews(vm)
-    Spacer(Modifier.height(10.dp))
+    if (playerMode) {
+        // ── 播放器：实时画面，播放定位选段 ──
+        ClipPlayerCard(
+            controller = clipPlayer,
+            startMs = startMs,
+            endMs = endMs,
+            durationMs = duration
+        )
+        Spacer(Modifier.height(10.dp))
+        ClipMarkControls(vm, clipPlayer)
+        Spacer(Modifier.height(10.dp))
+    } else {
+        // ── 降级：播放器不可用时回到首尾帧静态预览 ──
+        ClipFramePreviews(vm)
+        Spacer(Modifier.height(10.dp))
+    }
 
-    // ── 时间轴缩略图 ──
+    // ── 时间轴缩略图（播放头指示；拖把手 seek 预览） ──
+    var resumeAfterDrag by remember { mutableStateOf(false) }
     ClipTimelineStrip(
         durationMs = duration,
         startMs = startMs,
         endMs = endMs,
         thumbs = vm.clipThumbs,
         enabled = !vm.isClipping,
-        onRangeChanged = { s, e -> vm.setClipRange(s, e) }
+        playheadMs = if (playerMode) clipPlayer.positionMs else null,
+        allowManualZoom = !playerMode,
+        tapToSeek = playerMode,
+        onRangeChanged = { s, e -> vm.setClipRange(s, e) },
+        onSeekPreview = if (playerMode) ({ clipPlayer.seekTo(it) }) else null,
+        onDragStateChange = if (playerMode) ({ dragging ->
+            if (dragging) {
+                resumeAfterDrag = clipPlayer.isPlaying
+                clipPlayer.pause()
+            } else if (resumeAfterDrag) {
+                clipPlayer.play()
+                resumeAfterDrag = false
+            }
+        }) else null
     )
     Spacer(Modifier.height(8.dp))
 
@@ -1178,51 +1220,41 @@ private fun ClipEditor(vm: MainViewModel) {
     }
     Spacer(Modifier.height(10.dp))
 
-    // ── 微调 ──
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        TimeStepperCard(
-            modifier = Modifier.weight(1f),
-            label = "开始",
-            timeText = formatClipTime(startMs),
-            onMinus = { vm.nudgeClipStart(-1000L) },
-            onPlus = { vm.nudgeClipStart(1000L) },
-            enabled = !vm.isClipping
-        )
-        TimeStepperCard(
-            modifier = Modifier.weight(1f),
-            label = "结束",
-            timeText = formatClipTime(endMs),
-            onMinus = { vm.nudgeClipEnd(-1000L) },
-            onPlus = { vm.nudgeClipEnd(1000L) },
-            enabled = !vm.isClipping
-        )
-    }
-    Spacer(Modifier.height(10.dp))
-
-    // ── 元信息（轻量居中文本，替代信息卡片） ──
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            if (estimatedBytes > 0) {
-                "原视频 ${formatClipTime(duration)}  ·  预计约 ${formatFileSize(estimatedBytes)}"
-            } else {
-                "原视频 ${formatClipTime(duration)}"
-            },
-            fontSize = 12.sp,
-            color = iOSSecondary
-        )
-        if (snapped.first != startMs || snapped.second != endMs) {
-            Spacer(Modifier.height(5.dp))
-            Text(
-                "将按关键帧对齐至 ${formatClipTime(snapped.first)} ~ ${formatClipTime(snapped.second)}",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFFFF9500)
+    if (!playerMode) {
+        // ── 微调（仅降级模式提供） ──
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TimeStepperCard(
+                modifier = Modifier.weight(1f),
+                label = "开始",
+                timeText = formatClipTime(startMs),
+                onMinus = { vm.nudgeClipStart(-1000L) },
+                onPlus = { vm.nudgeClipStart(1000L) },
+                enabled = !vm.isClipping
+            )
+            TimeStepperCard(
+                modifier = Modifier.weight(1f),
+                label = "结束",
+                timeText = formatClipTime(endMs),
+                onMinus = { vm.nudgeClipEnd(-1000L) },
+                onPlus = { vm.nudgeClipEnd(1000L) },
+                enabled = !vm.isClipping
             )
         }
+        Spacer(Modifier.height(10.dp))
     }
+
+    // ── 元信息（轻量居中文本） ──
+    Text(
+        if (estimatedBytes > 0) {
+            "原视频 ${formatClipTime(duration)}  ·  预计约 ${formatFileSize(estimatedBytes)}"
+        } else {
+            "原视频 ${formatClipTime(duration)}"
+        },
+        fontSize = 12.sp,
+        color = iOSSecondary,
+        modifier = Modifier.fillMaxWidth(),
+        textAlign = TextAlign.Center
+    )
     Spacer(Modifier.height(12.dp))
 
     // ── 操作区 ──
@@ -1294,7 +1326,12 @@ private fun ClipTimelineStrip(
     endMs: Long,
     thumbs: List<ImageBitmap?>,
     enabled: Boolean,
-    onRangeChanged: (Long, Long) -> Unit
+    playheadMs: Long? = null,
+    allowManualZoom: Boolean = false,
+    tapToSeek: Boolean = false,
+    onRangeChanged: (Long, Long) -> Unit,
+    onSeekPreview: ((Long) -> Unit)? = null,
+    onDragStateChange: ((Boolean) -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -1302,6 +1339,9 @@ private fun ClipTimelineStrip(
     val currentStartMs by rememberUpdatedState(startMs)
     val currentEndMs by rememberUpdatedState(endMs)
     val currentOnRangeChanged by rememberUpdatedState(onRangeChanged)
+    val currentOnSeekPreview by rememberUpdatedState(onSeekPreview)
+    val currentOnDragStateChange by rememberUpdatedState(onDragStateChange)
+    val currentTapToSeek by rememberUpdatedState(tapToSeek)
     var activeHandle by remember { mutableStateOf<Int?>(null) }
     // 缩放倍率与视口偏移（内容像素）；换视频后重置
     var zoom by remember(durationMs) { mutableFloatStateOf(1f) }
@@ -1344,37 +1384,42 @@ private fun ClipTimelineStrip(
                 .background(Color(0xFF14141A))
                 .then(
                     if (enabled) Modifier
-                        // 双指缩放（以手势中心为锚点）；放大后单指平移视口
-                        .pointerInput(durationMs) {
-                            detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                                if (gestureZoom != 1f) {
-                                    val newZoom = (zoom * gestureZoom).coerceIn(1f, maxZoom)
-                                    val newContentW = stripWpx * newZoom
-                                    val tAtCentroid = (centroid.x + scrollX) / (stripWpx * zoom) * durationMs
-                                    scrollX = (tAtCentroid / durationMs * newContentW - centroid.x)
-                                        .coerceIn(0f, (newContentW - stripWpx).coerceAtLeast(0f))
-                                    zoom = newZoom
-                                } else if (zoom > 1.01f && pan.x != 0f) {
-                                    scrollX = (scrollX - pan.x)
-                                        .coerceIn(0f, (stripWpx * zoom - stripWpx).coerceAtLeast(0f))
+                        // 双指缩放/平移（仅降级模式保留；播放器模式靠播放定位）
+                        .then(
+                            if (allowManualZoom) Modifier.pointerInput(durationMs) {
+                                detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                                    if (gestureZoom != 1f) {
+                                        val newZoom = (zoom * gestureZoom).coerceIn(1f, maxZoom)
+                                        val newContentW = stripWpx * newZoom
+                                        val tAtCentroid = (centroid.x + scrollX) / (stripWpx * zoom) * durationMs
+                                        scrollX = (tAtCentroid / durationMs * newContentW - centroid.x)
+                                            .coerceIn(0f, (newContentW - stripWpx).coerceAtLeast(0f))
+                                        zoom = newZoom
+                                    } else if (zoom > 1.01f && pan.x != 0f) {
+                                        scrollX = (scrollX - pan.x)
+                                            .coerceIn(0f, (stripWpx * zoom - stripWpx).coerceAtLeast(0f))
+                                    }
                                 }
-                            }
-                        }
-                        // 单击：把手就近移动；双击：恢复 1x
+                            } else Modifier
+                        )
                         .pointerInput(durationMs) {
                             detectTapGestures(
-                                onDoubleTap = {
-                                    zoom = 1f
-                                    scrollX = 0f
-                                },
+                                onDoubleTap = if (allowManualZoom) {
+                                    { zoom = 1f; scrollX = 0f }
+                                } else null,
                                 onTap = { offset ->
                                     val t = msOfContent(offset.x + scrollX, stripWpx, zoom, durationMs)
-                                    val distStart = kotlin.math.abs(t - currentStartMs)
-                                    val distEnd = kotlin.math.abs(currentEndMs - t)
-                                    val (newStart, newEnd) =
-                                        if (distStart <= distEnd) t to currentEndMs else currentStartMs to t
-                                    currentOnRangeChanged(newStart, newEnd)
-                                    autoZoomForNarrowSelection(newStart, newEnd, t, offset.x)
+                                    if (currentTapToSeek) {
+                                        // 播放器模式：点时间轴跳转播放位置
+                                        currentOnSeekPreview?.invoke(t)
+                                    } else {
+                                        val distStart = kotlin.math.abs(t - currentStartMs)
+                                        val distEnd = kotlin.math.abs(currentEndMs - t)
+                                        val (newStart, newEnd) =
+                                            if (distStart <= distEnd) t to currentEndMs else currentStartMs to t
+                                        currentOnRangeChanged(newStart, newEnd)
+                                        autoZoomForNarrowSelection(newStart, newEnd, t, offset.x)
+                                    }
                                 }
                             )
                         }
@@ -1444,6 +1489,20 @@ private fun ClipTimelineStrip(
                     .border(2.dp, Color.White, RoundedCornerShape(10.dp))
             )
 
+            // 播放头指示线
+            if (playheadMs != null) {
+                val phScreenX = contentOfMs(playheadMs, stripWpx, zoom, durationMs) - scrollX
+                if (phScreenX >= -2f && phScreenX <= stripWpx + 2f) {
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .absoluteOffset { IntOffset(phScreenX.roundToInt() - 1, 0) }
+                            .width(2.dp)
+                            .background(Color(0xFFFFD60A))
+                    )
+                }
+            }
+
             // 左把手
             ClipHandle(
                 modifier = Modifier
@@ -1455,8 +1514,12 @@ private fun ClipTimelineStrip(
                 onDragStart = {
                     activeHandle = 0
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    currentOnDragStateChange?.invoke(true)
                 },
-                onDragEnd = { activeHandle = null },
+                onDragEnd = {
+                    activeHandle = null
+                    currentOnDragStateChange?.invoke(false)
+                },
                 onDrag = { dragAmount ->
                     val newT = msOfContent(contentOfMs(currentStartMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
                     currentOnRangeChanged(newT, currentEndMs)
@@ -1474,6 +1537,7 @@ private fun ClipTimelineStrip(
                         zoom = zoom,
                         edgeMarginPx = edgeMarginPx
                     ) { scrollX = it }
+                    currentOnSeekPreview?.invoke(newT)
                 }
             )
             // 右把手
@@ -1487,8 +1551,12 @@ private fun ClipTimelineStrip(
                 onDragStart = {
                     activeHandle = 1
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    currentOnDragStateChange?.invoke(true)
                 },
-                onDragEnd = { activeHandle = null },
+                onDragEnd = {
+                    activeHandle = null
+                    currentOnDragStateChange?.invoke(false)
+                },
                 onDrag = { dragAmount ->
                     val newT = msOfContent(contentOfMs(currentEndMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
                     currentOnRangeChanged(currentStartMs, newT)
@@ -1505,11 +1573,12 @@ private fun ClipTimelineStrip(
                         zoom = zoom,
                         edgeMarginPx = edgeMarginPx
                     ) { scrollX = it }
+                    currentOnSeekPreview?.invoke(newT)
                 }
             )
 
-            // 缩放指示：显示当前视口跨度的视频时长
-            if (zoom > 1.01f) {
+            // 缩放指示：显示当前视口跨度的视频时长（仅降级模式的手动缩放）
+            if (allowManualZoom && zoom > 1.01f) {
                 Text(
                     "可视 " + formatClipTime((durationMs / zoom).roundToLong()),
                     fontSize = 10.sp,
@@ -1548,6 +1617,125 @@ private inline fun panViewportTo(
         setScroll((contentX - (stripWpx - edgeMarginPx)).coerceIn(0f, maxScroll))
     } else if (handleScreenX < edgeMarginPx) {
         setScroll((contentX - edgeMarginPx).coerceIn(0f, maxScroll))
+    }
+}
+
+/**
+ * 剪辑页播放器卡片：实时画面 + 中央播放/暂停，元数据就绪前显示缓冲指示。
+ * 播放头位置由 tick() 轮询刷新，选区循环窗口随起止点变化更新。
+ */
+@Composable
+private fun ClipPlayerCard(
+    controller: ClipPlaybackController,
+    startMs: Long,
+    endMs: Long,
+    durationMs: Long
+) {
+    LaunchedEffect(controller.isPlaying) {
+        while (controller.isPlaying) {
+            controller.tick()
+            delay(100)
+        }
+    }
+    LaunchedEffect(startMs, endMs, durationMs) {
+        controller.setLoopWindow(startMs, endMs, durationMs)
+    }
+
+    // 画面宽高比随视频自适应（限制在 9:16 ~ 16:9，超常比例留黑边）
+    var aspectRatio by remember { mutableFloatStateOf(16f / 9f) }
+    LaunchedEffect(controller.isReady) {
+        if (!controller.isReady) return@LaunchedEffect
+        val vs = controller.player.videoSize
+        var w = vs.width
+        var h = vs.height
+        if (vs.unappliedRotationDegrees == 90 || vs.unappliedRotationDegrees == 270) {
+            val t = w; w = h; h = t
+        }
+        if (w > 0 && h > 0) aspectRatio = (w.toFloat() / h).coerceIn(9f / 16f, 16f / 9f)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(aspectRatio)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black)
+            .clickable(
+                interactionSource = null,
+                indication = null,
+                onClick = controller::togglePlayPause
+            )
+    ) {
+        // TextureView：支持圆角裁剪与滚动容器
+        AndroidView(
+            factory = { ctx ->
+                android.view.TextureView(ctx).also { controller.player.setVideoTextureView(it) }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        if (!controller.isReady) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        } else if (!controller.isPlaying) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("▶", fontSize = 32.sp, color = Color.White.copy(alpha = 0.92f))
+            }
+        }
+    }
+}
+
+/** 设为起点 / 当前播放时间 / 设为终点：播放器模式的核心选段操作 */
+@Composable
+private fun ClipMarkControls(vm: MainViewModel, controller: ClipPlaybackController) {
+    val haptic = LocalHapticFeedback.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MarkButton(modifier = Modifier.weight(1f), label = "设为起点", symbol = "⇤") {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            vm.markClipStart(controller.positionMs)
+        }
+        Text(
+            formatClipTime(controller.positionMs),
+            fontSize = 13.sp,
+            color = iOSSecondary,
+            fontFamily = FontFamily.Monospace
+        )
+        MarkButton(modifier = Modifier.weight(1f), label = "设为终点", symbol = "⇥") {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            vm.markClipEnd(controller.positionMs)
+        }
+    }
+}
+
+@Composable
+private fun MarkButton(
+    modifier: Modifier,
+    label: String,
+    symbol: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF1C1C22))
+            .clickable(interactionSource = null, indication = null, onClick = onClick)
+            .padding(vertical = 11.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(symbol, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = iOSBlue)
+            Spacer(Modifier.width(5.dp))
+            Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = iOSLabel)
+        }
     }
 }
 

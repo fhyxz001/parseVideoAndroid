@@ -59,6 +59,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var clipThumbs by mutableStateOf<List<ImageBitmap?>>(emptyList())
     var clipThumbsLoading by mutableStateOf(false)
 
+    /** 播放器加载失败，剪辑页降级为静态时间轴模式 */
+    var clipPlayerFailed by mutableStateOf(false)
+
     // 首帧/尾帧预览
     var clipStartFrame by mutableStateOf<ImageBitmap?>(null)
     var clipEndFrame by mutableStateOf<ImageBitmap?>(null)
@@ -296,6 +299,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clipPhaseText = ""
         showFrameSaveDialog = false
         isSavingFrame = false
+        clipPlayerFailed = false
     }
 
     fun openClipPage() {
@@ -334,20 +338,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     is ClipProbe.Fallback -> probed.durationMs
                 }
                 if (clipDurationMs > 0) {
-                    // 默认选择前 10 分钟（不足则全选）
+                    // 默认全选，用户通过播放定位后一键截取
                     clipStartMs = 0L
-                    clipEndMs = minOf(clipDurationMs, DEFAULT_CLIP_WINDOW_MS)
+                    clipEndMs = clipDurationMs
                 }
                 clipProbing = false
                 ensureClipThumbs()
             }
         }
-    }
-
-    /** 关键帧吸附后的实际剪辑窗口，UI 用于展示“实际将剪出哪一段” */
-    fun snappedClipWindow(): Pair<Long, Long> {
-        val probe = clipProbe ?: return clipStartMs to clipEndMs
-        return VideoClipper.snappedWindowMs(probe, clipStartMs, clipEndMs)
     }
 
     /** 拖动滑块设置起止时间（毫秒），自动钳制顺序与最小间隔 */
@@ -367,6 +365,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun nudgeClipStart(deltaMs: Long) = setClipRange(clipStartMs + deltaMs, clipEndMs)
 
     fun nudgeClipEnd(deltaMs: Long) = setClipRange(clipStartMs, clipEndMs + deltaMs)
+
+    /** 播放器模式下：把当前播放位置设为起点；越过终点时终点顺延最小间隔 */
+    fun markClipStart(posMs: Long) {
+        if (clipDurationMs <= 0) return
+        val s = posMs.coerceIn(0L, clipDurationMs)
+        if (s + MIN_CLIP_SPAN_MS > clipDurationMs) {
+            clipStartMs = clipDurationMs - MIN_CLIP_SPAN_MS
+            clipEndMs = clipDurationMs
+            return
+        }
+        if (s >= clipEndMs) clipEndMs = (s + MIN_CLIP_SPAN_MS).coerceAtMost(clipDurationMs)
+        clipStartMs = s
+    }
+
+    /** 播放器模式下：把当前播放位置设为终点；越过起点时起点回退最小间隔 */
+    fun markClipEnd(posMs: Long) {
+        if (clipDurationMs <= 0) return
+        val e = posMs.coerceIn(0L, clipDurationMs)
+        if (e < MIN_CLIP_SPAN_MS) {
+            clipStartMs = 0L
+            clipEndMs = MIN_CLIP_SPAN_MS
+            return
+        }
+        if (e <= clipStartMs) clipStartMs = (e - MIN_CLIP_SPAN_MS).coerceAtLeast(0L)
+        clipEndMs = e
+    }
+
+    /** 当前解析视频的播放地址（剪辑页播放器用） */
+    val clipVideoUrl: String
+        get() = parseData?.videoUrl?.trim().orEmpty()
 
     fun startClipDownload() {
         if (isClipping) return
@@ -645,7 +673,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        private const val DEFAULT_CLIP_WINDOW_MS = 10 * 60 * 1000L
         private const val MIN_CLIP_SPAN_MS = 1000L
         private const val CLIP_THUMB_COUNT = 16
         private const val THUMB_WORKERS = 3
