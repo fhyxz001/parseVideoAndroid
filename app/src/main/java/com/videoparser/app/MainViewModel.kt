@@ -69,9 +69,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** 剪辑成功后的结果文件名；非空表示剪辑页展示完成状态 */
     var clipResultFileName by mutableStateOf<String?>(null)
 
-    /** 播放器加载失败，剪辑页降级为静态时间轴模式 */
-    var clipPlayerFailed by mutableStateOf(false)
-
     // 首帧/尾帧预览
     var clipStartFrame by mutableStateOf<ImageBitmap?>(null)
     var clipEndFrame by mutableStateOf<ImageBitmap?>(null)
@@ -312,7 +309,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clipPhaseText = ""
         showFrameSaveDialog = false
         isSavingFrame = false
-        clipPlayerFailed = false
     }
 
     fun openClipPage() {
@@ -437,10 +433,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** 当前实际截取时长（秒） */
     val clipSelectedSeconds: Double
         get() = (clipEndMs - clipStartMs).coerceAtLeast(0L) / 1000.0
-
-    /** 当前解析视频的播放地址（剪辑页播放器用） */
-    val clipVideoUrl: String
-        get() = parseData?.videoUrl?.trim().orEmpty()
 
     fun startClipDownload() {
         if (isClipping) return
