@@ -723,7 +723,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val DEFAULT_CLIP_PRESET_SEC = 10
 
         /** 快捷截取时长选项（秒） */
-        val CLIP_PRESET_SECONDS = listOf(5, 10, 15, 30)
+        val CLIP_PRESET_SECONDS = listOf(5, 10, 15)
 
         private const val CLIP_THUMB_COUNT = 16
         private const val THUMB_WORKERS = 3
