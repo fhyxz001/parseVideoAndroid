@@ -72,6 +72,15 @@ class ClipPlaybackController(context: Context) {
         positionMs = clamped
     }
 
+    /** 相对当前播放位置快进/快退（自动钳制到 0 与视频末尾） */
+    fun skipBy(deltaMs: Long) {
+        if (!isReady) return
+        val target = (positionMs + deltaMs)
+            .coerceAtLeast(0L)
+            .coerceAtMost(player.duration.coerceAtLeast(0L))
+        seekTo(target)
+    }
+
     /**
      * 设置选区循环窗口：播放越过终点自动回跳起点。
      * 全选（终点=时长）时不启用循环，让播放自然结束。

@@ -2,8 +2,11 @@ package com.videoparser.app
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -1026,7 +1029,6 @@ fun ClipPage(vm: MainViewModel) {
             .fillMaxSize()
             .background(BgGradient)
             .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
         Column(
             modifier = Modifier
@@ -1034,7 +1036,7 @@ fun ClipPage(vm: MainViewModel) {
                 .widthIn(max = cardMaxWidth())
                 .align(Alignment.TopCenter)
         ) {
-            // ── 页头：返回 + 标题 ──
+            // ── 页头：返回 + 标题（固定） ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1058,7 +1060,7 @@ fun ClipPage(vm: MainViewModel) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text(
-                        "剪辑下载",
+                        "快速截取",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = iOSLabel,
@@ -1066,26 +1068,32 @@ fun ClipPage(vm: MainViewModel) {
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "点击时间轴设起点，支持输入时间与 +N秒 微调",
+                        "选好开始位置与时长，一键剪出片段",
                         fontSize = 12.sp,
                         color = iOSSecondary
                     )
                 }
             }
 
-            // ── 内容 ──
+            // ── 内容（可滚动） ──
             Column(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 12.dp)
             ) {
                 when {
                     vm.clipProbing -> ClipProbingView()
                     vm.clipDurationMs <= 0 -> ClipUnavailableView()
                     else -> ClipEditor(vm, clipPlayer)
                 }
+            }
+
+            // ── 底部固定操作栏（安全区 + 软键盘适配） ──
+            if (!vm.clipProbing && vm.clipDurationMs > 0) {
+                ClipBottomBar(vm)
             }
         }
 
@@ -1155,34 +1163,27 @@ private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
     val duration = vm.clipDurationMs
     val startMs = vm.clipStartMs
     val endMs = vm.clipEndMs
-    val selected = (endMs - startMs).coerceAtLeast(0L)
-    val estimatedBytes = if (vm.videoFileSize > 0 && duration > 0) {
-        vm.videoFileSize * selected / duration
-    } else 0L
     val playerMode = !vm.clipPlayerFailed
+    var resumeAfterDrag by remember { mutableStateOf(false) }
 
+    // ── 视频预览（播放器不可用时降级为首尾帧静态预览） ──
     if (playerMode) {
-        // ── 播放器：实时画面，播放定位选段 ──
         ClipPlayerCard(
             controller = clipPlayer,
             startMs = startMs,
             endMs = endMs,
             durationMs = duration
         )
-        Spacer(Modifier.height(10.dp))
-        ClipMarkControls(vm, clipPlayer)
-        Spacer(Modifier.height(8.dp))
-        ClipTimeInputs(vm, clipPlayer)
-        Spacer(Modifier.height(10.dp))
     } else {
-        // ── 降级：播放器不可用时回到首尾帧静态预览 ──
         ClipFramePreviews(vm)
-        Spacer(Modifier.height(10.dp))
     }
+    Spacer(Modifier.height(12.dp))
 
-    // ── 时间轴缩略图（播放头指示；点击设起点，拖动刷视频预览） ──
-    val clipHaptic = LocalHapticFeedback.current
-    var resumeAfterDrag by remember { mutableStateOf(false) }
+    // ── 快速截取设置：开始时间 + 快捷时长 + 片段信息 ──
+    ClipQuickSettings(vm, clipPlayer)
+    Spacer(Modifier.height(14.dp))
+
+    // ── 片段选择时间轴：拖动开始/结束手柄，点击跳转播放 ──
     ClipTimelineStrip(
         durationMs = duration,
         startMs = startMs,
@@ -1191,14 +1192,11 @@ private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
         enabled = !vm.isClipping,
         playheadMs = if (playerMode) clipPlayer.positionMs else null,
         allowManualZoom = !playerMode,
-        onRangeChanged = { s, e -> vm.setClipRange(s, e) },
-        onTimelineTap = if (playerMode) ({ t ->
-            clipHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            vm.markClipStart(t)
-            clipPlayer.seekTo(t)
-        }) else null,
+        onStartHandleDrag = { t -> vm.setClipStartKeepingDuration(t) },
+        onEndHandleDrag = { t -> vm.setClipEndManual(t) },
+        onTimelineTap = if (playerMode) ({ t -> clipPlayer.seekTo(t) }) else null,
         onTimelineScrub = if (playerMode) ({ t -> clipPlayer.seekTo(t) }) else null,
-        onSeekPreview = if (playerMode) ({ clipPlayer.seekTo(it) }) else null,
+        onSeekPreview = if (playerMode) ({ t -> clipPlayer.seekTo(t) }) else null,
         onDragStateChange = if (playerMode) ({ dragging ->
             if (dragging) {
                 resumeAfterDrag = clipPlayer.isPlaying
@@ -1209,120 +1207,367 @@ private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
             }
         }) else null
     )
-    Spacer(Modifier.height(8.dp))
-
-    // ── 时间读数：两端时间 + 中间时长药丸 ──
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            formatClipTime(startMs),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = iOSLabel,
-            fontFamily = FontFamily.Monospace
-        )
-        DurationPill("已选 ${formatClipTime(selected)}")
-        Text(
-            formatClipTime(endMs),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = iOSLabel,
-            fontFamily = FontFamily.Monospace
-        )
-    }
     Spacer(Modifier.height(10.dp))
 
-    if (!playerMode) {
-        // ── 微调（仅降级模式提供） ──
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TimeStepperCard(
-                modifier = Modifier.weight(1f),
-                label = "开始",
-                timeText = formatClipTime(startMs),
-                onMinus = { vm.nudgeClipStart(-1000L) },
-                onPlus = { vm.nudgeClipStart(1000L) },
-                enabled = !vm.isClipping
-            )
-            TimeStepperCard(
-                modifier = Modifier.weight(1f),
-                label = "结束",
-                timeText = formatClipTime(endMs),
-                onMinus = { vm.nudgeClipEnd(-1000L) },
-                onPlus = { vm.nudgeClipEnd(1000L) },
-                enabled = !vm.isClipping
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-    }
-
-    // ── 元信息（轻量居中文本） ──
     Text(
-        if (estimatedBytes > 0) {
-            "原视频 ${formatClipTime(duration)}  ·  预计约 ${formatFileSize(estimatedBytes)}"
-        } else {
-            "原视频 ${formatClipTime(duration)}"
-        },
-        fontSize = 12.sp,
+        "点击时间轴可跳转播放，拖动两端手柄调整片段范围",
+        fontSize = 11.sp,
         color = iOSSecondary,
         modifier = Modifier.fillMaxWidth(),
         textAlign = TextAlign.Center
     )
-    Spacer(Modifier.height(12.dp))
+}
 
-    // ── 操作区 ──
-    if (!vm.isClipping) {
-        PressButton(
+/**
+ * 快速截取设置区（核心操作区）：
+ * 开始时间（可点击精确输入）+ 快捷截取时长（5/10/15/30/自定义）+ 片段信息。
+ */
+@Composable
+private fun ClipQuickSettings(vm: MainViewModel, controller: ClipPlaybackController) {
+    var showStartInput by remember { mutableStateOf(false) }
+    var showCustomInput by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // 开始时间：点击进入精确输入
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = cardMaxWidth()),
-            onClick = vm::startClipDownload,
-            background = iOSGreen,
-            shadowColor = iOSGreen.copy(alpha = 0.3f),
-            contentColor = Color.White
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF1C1C22))
+                .clickable(interactionSource = null, indication = null) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    showStartInput = true
+                }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("✂", fontSize = 14.sp, color = Color.White)
-                Spacer(Modifier.width(6.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("开始时间", fontSize = 11.sp, color = iOSSecondary)
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    if (estimatedBytes > 0) "剪辑并下载（约 ${formatFileSize(estimatedBytes)}）"
-                    else "剪辑并下载",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.25.sp
+                    formatClipSeconds(vm.clipStartMs),
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = iOSLabel,
+                    fontFamily = FontFamily.Monospace
                 )
             }
+            Text("精确输入", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = iOSBlue)
         }
-    } else {
-        ClipProgressArea(
-            phaseText = vm.clipPhaseText,
-            percent = vm.clipPercent,
-            onCancel = vm::cancelClip
+        Spacer(Modifier.height(12.dp))
+
+        Text("截取时长", fontSize = 12.sp, color = iOSSecondary)
+        Spacer(Modifier.height(7.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MainViewModel.CLIP_PRESET_SECONDS.forEach { sec ->
+                DurationChip(
+                    label = "${sec}秒",
+                    selected = !vm.clipCustomDuration && vm.clipPresetSec == sec
+                ) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.applyClipPreset(sec)
+                }
+            }
+            DurationChip(label = "自定义", selected = vm.clipCustomDuration) {
+                showCustomInput = true
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // 片段信息：截取范围 + 实际时长
+        Text(
+            "${formatClipSeconds(vm.clipStartMs)} — ${formatClipSeconds(vm.clipEndMs)} · 共 ${
+                formatSecondsShort(vm.clipSelectedSeconds)
+            }",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = iOSLabel,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
+    }
+
+    if (showStartInput) {
+        ClipInputDialog(
+            title = "输入开始时间",
+            label = "秒 / 分:秒 / 时:分:秒",
+            hint = "例如 32.5 或 1:05",
+            initialText = secondsInputText(vm.clipStartMs),
+            keyboardType = KeyboardType.Ascii,
+            parse = { raw -> parseClipSeconds(raw) },
+            onApply = { sec ->
+                val ms = (sec * 1000).roundToLong()
+                vm.setClipStartKeepingDuration(ms)
+                controller.seekTo(vm.clipStartMs)
+            },
+            onDismiss = { showStartInput = false }
+        )
+    }
+    if (showCustomInput) {
+        ClipInputDialog(
+            title = "自定义截取时长",
+            label = "截取秒数",
+            hint = "例如 12.5",
+            initialText = String.format(Locale.US, "%.1f", vm.clipSelectedSeconds),
+            keyboardType = KeyboardType.Decimal,
+            parse = { raw -> parseClipSeconds(raw)?.takeIf { it > 0 } },
+            onApply = { sec -> vm.applyClipCustomDuration(sec) },
+            onDismiss = { showCustomInput = false }
         )
     }
 }
 
-/** 蓝色时长药丸 */
+/** 快捷时长药丸：选中态使用主色填充，未选中为浅色描边 */
 @Composable
-private fun DurationPill(text: String) {
-    Row(
+private fun DurationChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(Color(0xFFE9F2FF))
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .background(if (selected) iOSBlue else Color(0xFFF2F2F7))
+            .clickable(interactionSource = null, indication = null, onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 9.dp)
     ) {
-        Text("✂", fontSize = 11.sp, color = iOSBlue)
-        Spacer(Modifier.width(5.dp))
         Text(
-            text,
-            fontSize = 12.sp,
+            label,
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            color = iOSBlue
+            color = if (selected) Color.White else iOSLabel
         )
+    }
+}
+
+/** 时间/时长输入弹窗：确认时才做合法性校验，输入过程中不重置内容 */
+@Composable
+private fun ClipInputDialog(
+    title: String,
+    label: String,
+    hint: String,
+    initialText: String,
+    keyboardType: KeyboardType,
+    parse: (String) -> Double?,
+    onApply: (Double) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(initialText) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun confirm() {
+        val value = parse(text)
+        if (value == null) {
+            error = "请输入有效的时间"
+        } else {
+            onApply(value)
+            onDismiss()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        error = null
+                    },
+                    singleLine = true,
+                    label = { Text(label) },
+                    placeholder = { Text(hint) },
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = keyboardType,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { confirm() }),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                error?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, fontSize = 12.sp, color = Color(0xFFFF3B30))
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { confirm() }) { Text("确定") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+/**
+ * 底部固定操作栏：截取摘要 + 唯一主按钮，处理中显示进度，成功后展示完成状态。
+ */
+@Composable
+private fun ClipBottomBar(vm: MainViewModel) {
+    val context = LocalContext.current
+    val resultName = vm.clipResultFileName
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BgGradient)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 20.dp)
+            .padding(top = 10.dp, bottom = 12.dp)
+    ) {
+        when {
+            resultName != null -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("✓", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = iOSGreen)
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "剪辑完成，已保存到相册",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = iOSLabel
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            resultName,
+                            fontSize = 11.sp,
+                            color = iOSSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFFF2F2F7))
+                            .clickable(interactionSource = null, indication = null) {
+                                openClipResult(context, resultName)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "打开相册",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = iOSLabel
+                        )
+                    }
+                    PressButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = vm::dismissClipResult,
+                        background = iOSBlue,
+                        shadowColor = iOSBlue.copy(alpha = 0.3f),
+                        contentColor = Color.White,
+                        height = 48.dp
+                    ) {
+                        Text(
+                            "完成",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            vm.isClipping -> ClipProgressArea(
+                phaseText = vm.clipPhaseText,
+                percent = vm.clipPercent,
+                onCancel = vm::cancelClip
+            )
+
+            else -> {
+                Text(
+                    "已选择 ${formatClipTime(vm.clipStartMs)}–${formatClipTime(vm.clipEndMs)} · ${
+                        formatSecondsShort(vm.clipSelectedSeconds)
+                    }",
+                    fontSize = 12.sp,
+                    color = iOSSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+                val estimatedBytes = if (vm.videoFileSize > 0 && vm.clipDurationMs > 0) {
+                    vm.videoFileSize * (vm.clipEndMs - vm.clipStartMs).coerceAtLeast(0L) / vm.clipDurationMs
+                } else 0L
+                PressButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = cardMaxWidth()),
+                    onClick = vm::startClipDownload,
+                    background = iOSGreen,
+                    shadowColor = iOSGreen.copy(alpha = 0.3f),
+                    contentColor = Color.White
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("✂", fontSize = 14.sp, color = Color.White)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (estimatedBytes > 0) "剪辑并下载（约 ${formatFileSize(estimatedBytes)}）"
+                            else "剪辑并下载",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.25.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 打开刚剪辑好的视频：优先定位到相册中的该文件，失败则打开系统视频列表 */
+private fun openClipResult(context: Context, fileName: String) {
+    val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+    val uri = runCatching {
+        context.contentResolver.query(
+            collection,
+            arrayOf(MediaStore.Video.Media._ID),
+            "${MediaStore.Video.Media.DISPLAY_NAME}=?",
+            arrayOf(fileName),
+            "${MediaStore.Video.Media.DATE_ADDED} DESC"
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) ContentUris.withAppendedId(collection, cursor.getLong(0)) else null
+        }
+    }.getOrNull()
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri ?: collection, "video/*")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(intent) }
+}
+
+/** 时间轴时间显示：mm:ss.d（带一位小数，便于秒级微调） */
+private fun formatClipSeconds(ms: Long): String {
+    val totalTenths = (ms.coerceAtLeast(0L) + 50) / 100
+    val totalSec = totalTenths / 10
+    val tenth = totalTenths % 10
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) {
+        String.format(Locale.US, "%d:%02d:%02d.%d", h, m, s, tenth)
+    } else {
+        String.format(Locale.US, "%02d:%02d.%d", m, s, tenth)
+    }
+}
+
+/** 时长展示：整秒省略小数（10 秒 / 7.5 秒） */
+private fun formatSecondsShort(seconds: Double): String {
+    val rounded = (seconds * 10).roundToLong() / 10.0
+    return if (kotlin.math.abs(rounded - rounded.toLong()) < 0.05) {
+        "${rounded.toLong()} 秒"
+    } else {
+        String.format(Locale.US, "%.1f 秒", rounded)
     }
 }
 
@@ -1331,8 +1576,9 @@ private fun maxZoomFor(durationMs: Long): Float = (durationMs / 15_000f).coerceI
 
 /**
  * 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手。
- * 播放器模式：点击时间轴直接设起点（回调 onTimelineTap），拖动空白区刷视频预览（onTimelineScrub）。
- * 降级模式：保留双指缩放（以手势中心为锚点）、点选就近移动把手。
+ * 播放器模式：点击时间轴跳转播放位置（onTimelineTap），拖动空白区刷视频预览（onTimelineScrub）。
+ * 拖动开始手柄保持当前时长、结束时间联动（onStartHandleDrag）；拖动结束手柄重算时长（onEndHandleDrag）。
+ * 降级模式：保留双指缩放（以手势中心为锚点），点击就近移动对应手柄。
  * 选区在屏幕上过窄时（拖动把手触发）自动放大，避免长视频下小选区难以微调。
  */
 @Composable
@@ -1344,7 +1590,8 @@ private fun ClipTimelineStrip(
     enabled: Boolean,
     playheadMs: Long? = null,
     allowManualZoom: Boolean = false,
-    onRangeChanged: (Long, Long) -> Unit,
+    onStartHandleDrag: (Long) -> Unit,
+    onEndHandleDrag: (Long) -> Unit,
     onTimelineTap: ((Long) -> Unit)? = null,
     onTimelineScrub: ((Long) -> Unit)? = null,
     onSeekPreview: ((Long) -> Unit)? = null,
@@ -1355,7 +1602,8 @@ private fun ClipTimelineStrip(
     // pointerInput 不随重组重启，用 rememberUpdatedState 保证手势回调读到最新值
     val currentStartMs by rememberUpdatedState(startMs)
     val currentEndMs by rememberUpdatedState(endMs)
-    val currentOnRangeChanged by rememberUpdatedState(onRangeChanged)
+    val currentOnStartHandleDrag by rememberUpdatedState(onStartHandleDrag)
+    val currentOnEndHandleDrag by rememberUpdatedState(onEndHandleDrag)
     val currentOnTimelineTap by rememberUpdatedState(onTimelineTap)
     val currentOnTimelineScrub by rememberUpdatedState(onTimelineScrub)
     val currentOnSeekPreview by rememberUpdatedState(onSeekPreview)
@@ -1373,6 +1621,9 @@ private fun ClipTimelineStrip(
         val stripWpx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val handleW = 14.dp
         val handleWpx = with(density) { handleW.toPx() }
+        // 手柄视觉宽度保持纤细，但触摸区域加宽到 40dp，避免竖屏下难以精确拖动
+        val handleTouchW = 40.dp
+        val handleTouchWpx = with(density) { handleTouchW.toPx() }
         val edgeMarginPx = with(density) { 20.dp.toPx() }
         val maxZoom = maxZoomFor(durationMs)
 
@@ -1444,15 +1695,19 @@ private fun ClipTimelineStrip(
                                     val t = msOfContent(offset.x + scrollX, stripWpx, zoom, durationMs)
                                     val tapCb = currentOnTimelineTap
                                     if (tapCb != null) {
-                                        // 播放器模式：点击时间轴直接设为起点并跳转播放
+                                        // 播放器模式：点击时间轴跳转播放位置
                                         tapCb(t)
                                     } else {
+                                        // 降级模式：点击就近移动对应手柄
                                         val distStart = kotlin.math.abs(t - currentStartMs)
                                         val distEnd = kotlin.math.abs(currentEndMs - t)
-                                        val (newStart, newEnd) =
-                                            if (distStart <= distEnd) t to currentEndMs else currentStartMs to t
-                                        currentOnRangeChanged(newStart, newEnd)
-                                        autoZoomForNarrowSelection(newStart, newEnd, t, offset.x)
+                                        if (distStart <= distEnd) {
+                                            currentOnStartHandleDrag(t)
+                                            autoZoomForNarrowSelection(t, currentEndMs, t, offset.x)
+                                        } else {
+                                            currentOnEndHandleDrag(t)
+                                            autoZoomForNarrowSelection(currentStartMs, t, t, offset.x)
+                                        }
                                     }
                                 }
                             )
@@ -1541,8 +1796,9 @@ private fun ClipTimelineStrip(
             ClipHandle(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .absoluteOffset { IntOffset((selLeftScreen - handleWpx / 2).roundToInt(), 0) }
-                    .width(handleW),
+                    .absoluteOffset { IntOffset((selLeftScreen - handleTouchWpx / 2).roundToInt(), 0) }
+                    .width(handleTouchW),
+                visualWidth = handleW,
                 enabled = enabled,
                 active = activeHandle == 0,
                 onDragStart = {
@@ -1556,7 +1812,7 @@ private fun ClipTimelineStrip(
                 },
                 onDrag = { dragAmount ->
                     val newT = msOfContent(contentOfMs(currentStartMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
-                    currentOnRangeChanged(newT, currentEndMs)
+                    currentOnStartHandleDrag(newT)
                     // 注意 anchorScreenX 需在 zoom 被修改前求值，保证把手停留在手指原位置
                     autoZoomForNarrowSelection(
                         selStartMs = newT,
@@ -1578,8 +1834,9 @@ private fun ClipTimelineStrip(
             ClipHandle(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .absoluteOffset { IntOffset((selRightScreen - handleWpx / 2).roundToInt(), 0) }
-                    .width(handleW),
+                    .absoluteOffset { IntOffset((selRightScreen - handleTouchWpx / 2).roundToInt(), 0) }
+                    .width(handleTouchW),
+                visualWidth = handleW,
                 enabled = enabled,
                 active = activeHandle == 1,
                 onDragStart = {
@@ -1593,7 +1850,7 @@ private fun ClipTimelineStrip(
                 },
                 onDrag = { dragAmount ->
                     val newT = msOfContent(contentOfMs(currentEndMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
-                    currentOnRangeChanged(currentStartMs, newT)
+                    currentOnEndHandleDrag(newT)
                     autoZoomForNarrowSelection(
                         selStartMs = currentStartMs,
                         selEndMs = newT,
@@ -1721,55 +1978,56 @@ private fun ClipPlayerCard(
                 Text("▶", fontSize = 32.sp, color = Color.White.copy(alpha = 0.92f))
             }
         }
+
+        // 底部播放控制条：后退 / 播放暂停 / 前进 + 当前时间 / 总时长
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+                    )
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PlayerIconButton("⏪", enabled = controller.isReady) { controller.skipBy(-5_000L) }
+            Spacer(Modifier.width(4.dp))
+            PlayerIconButton(
+                if (controller.isPlaying) "⏸" else "▶",
+                enabled = controller.isReady
+            ) { controller.togglePlayPause() }
+            Spacer(Modifier.width(4.dp))
+            PlayerIconButton("⏩", enabled = controller.isReady) { controller.skipBy(5_000L) }
+            Spacer(Modifier.weight(1f))
+            Text(
+                "${formatClipTime(controller.positionMs)} / ${formatClipTime(durationMs)}",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                fontFamily = FontFamily.Monospace
+            )
+        }
     }
 }
 
-/** 设为起点 / 当前播放时间 / 设为终点：播放器模式的核心选段操作 */
+/** 播放器控制按钮：半透明圆形底，保证在任意画面上都清晰可见 */
 @Composable
-private fun ClipMarkControls(vm: MainViewModel, controller: ClipPlaybackController) {
-    val haptic = LocalHapticFeedback.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        MarkButton(modifier = Modifier.weight(1f), label = "设为起点", symbol = "⇤") {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            vm.markClipStart(controller.positionMs)
-        }
-        Text(
-            formatClipTime(controller.positionMs),
-            fontSize = 13.sp,
-            color = iOSSecondary,
-            fontFamily = FontFamily.Monospace
-        )
-        MarkButton(modifier = Modifier.weight(1f), label = "设为终点", symbol = "⇥") {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            vm.markClipEnd(controller.positionMs)
-        }
-    }
-}
-
-@Composable
-private fun MarkButton(
-    modifier: Modifier,
-    label: String,
-    symbol: String,
-    onClick: () -> Unit
-) {
+private fun PlayerIconButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF1C1C22))
-            .clickable(interactionSource = null, indication = null, onClick = onClick)
-            .padding(vertical = 11.dp),
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.32f))
+            .clickable(enabled = enabled, interactionSource = null, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(symbol, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = iOSBlue)
-            Spacer(Modifier.width(5.dp))
-            Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = iOSLabel)
-        }
+        Text(
+            symbol,
+            fontSize = 13.sp,
+            color = Color.White.copy(alpha = if (enabled) 1f else 0.45f)
+        )
     }
 }
 
@@ -1790,123 +2048,13 @@ private fun parseClipTimeInput(raw: String): Long? {
     }
 }
 
+/** 解析输入为秒（供输入弹窗使用） */
+private fun parseClipSeconds(raw: String): Double? =
+    parseClipTimeInput(raw)?.let { it / 1000.0 }
+
 /** 输入框展示用：秒（保留 1 位小数） */
 private fun secondsInputText(ms: Long): String =
     String.format(Locale.US, "%.1f", ms / 1000.0)
-
-/** 开始/结束手动输入行 + 起点加 N 秒快速设定时长 */
-@Composable
-private fun ClipTimeInputs(vm: MainViewModel, controller: ClipPlaybackController) {
-    val focusManager = LocalFocusManager.current
-    var editingStart by remember { mutableStateOf(false) }
-    var editingEnd by remember { mutableStateOf(false) }
-    var startText by remember { mutableStateOf(secondsInputText(vm.clipStartMs)) }
-    var endText by remember { mutableStateOf(secondsInputText(vm.clipEndMs)) }
-    var spanText by remember { mutableStateOf("") }
-
-    // 外部选区变化（拖把手/打点按钮）时同步显示，编辑中不回写
-    LaunchedEffect(vm.clipStartMs) { if (!editingStart) startText = secondsInputText(vm.clipStartMs) }
-    LaunchedEffect(vm.clipEndMs) { if (!editingEnd) endText = secondsInputText(vm.clipEndMs) }
-
-    fun applyStart() {
-        parseClipTimeInput(startText)?.let {
-            vm.markClipStart(it)
-            controller.seekTo(vm.clipStartMs)
-        }
-        editingStart = false
-        focusManager.clearFocus()
-    }
-    fun applyEnd() {
-        parseClipTimeInput(endText)?.let { vm.markClipEnd(it) }
-        editingEnd = false
-        focusManager.clearFocus()
-    }
-    fun applySpan() {
-        spanText.trim().removePrefix("+").toDoubleOrNull()?.let { vm.setClipDurationFromStart(it) }
-        focusManager.clearFocus()
-    }
-
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ClipInputField(
-            modifier = Modifier.weight(1f),
-            label = "开始 秒/分:秒",
-            value = startText,
-            onValueChange = { startText = it },
-            keyboardType = KeyboardType.Ascii,
-            onFocusChanged = { editingStart = it },
-            onApply = ::applyStart
-        )
-        ClipInputField(
-            modifier = Modifier.weight(1f),
-            label = "结束 秒/分:秒",
-            value = endText,
-            onValueChange = { endText = it },
-            keyboardType = KeyboardType.Ascii,
-            onFocusChanged = { editingEnd = it },
-            onApply = ::applyEnd
-        )
-        ClipInputField(
-            modifier = Modifier.weight(1f),
-            label = "起点 +N秒",
-            value = spanText,
-            onValueChange = { spanText = it },
-            keyboardType = KeyboardType.Decimal,
-            onFocusChanged = { },
-            onApply = ::applySpan,
-            hint = "+15"
-        )
-    }
-}
-
-@Composable
-private fun ClipInputField(
-    modifier: Modifier,
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    keyboardType: KeyboardType,
-    onFocusChanged: (Boolean) -> Unit,
-    onApply: () -> Unit,
-    hint: String? = null
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF1C1C22))
-            .padding(horizontal = 10.dp, vertical = 7.dp)
-    ) {
-        Text(label, fontSize = 10.sp, color = iOSSecondary)
-        Box {
-            if (value.isEmpty() && hint != null) {
-                Text(
-                    hint,
-                    fontSize = 14.sp,
-                    color = iOSSecondary.copy(alpha = 0.45f),
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                singleLine = true,
-                textStyle = TextStyle(
-                    fontSize = 14.sp,
-                    color = iOSLabel,
-                    fontFamily = FontFamily.Monospace
-                ),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = keyboardType,
-                    imeAction = ImeAction.Done
-                ),
-                keyboardActions = KeyboardActions(onDone = { onApply() }),
-                cursorBrush = SolidColor(iOSBlue),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { onFocusChanged(it.isFocused) }
-            )
-        }
-    }
-}
 
 /**
  * 首帧/尾帧双图预览：上方两块画面分别对应剪辑的起点与终点，
@@ -2039,6 +2187,7 @@ private fun PulsingPlaceholder(modifier: Modifier = Modifier) {
 @Composable
 private fun ClipHandle(
     modifier: Modifier,
+    visualWidth: Dp,
     enabled: Boolean,
     active: Boolean,
     onDragStart: () -> Unit,
@@ -2053,94 +2202,44 @@ private fun ClipHandle(
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "handleScale"
     )
+    // 外层 Box 承担加宽的触摸区域；内层白色把手按 visualWidth 绘制，保持视觉纤细
     Box(
-        modifier = modifier
-            .shadow(
-                elevation = if (active) 8.dp else 4.dp,
-                shape = RoundedCornerShape(5.dp),
-                ambientColor = Color.Black.copy(alpha = 0.4f),
-                spotColor = Color.Black.copy(alpha = 0.4f)
-            )
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(5.dp))
-            .background(Color.White)
-            .then(
-                if (enabled) Modifier.pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { currentOnDragStart() },
-                        onDragEnd = { currentOnDragEnd() },
-                        onDragCancel = { currentOnDragEnd() }
-                    ) { change, dragAmount ->
-                        change.consume()
-                        currentOnDrag(dragAmount)
-                    }
-                } else Modifier
-            ),
+        modifier = modifier.then(
+            if (enabled) Modifier.pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { currentOnDragStart() },
+                    onDragEnd = { currentOnDragEnd() },
+                    onDragCancel = { currentOnDragEnd() }
+                ) { change, dragAmount ->
+                    change.consume()
+                    currentOnDrag(dragAmount)
+                }
+            } else Modifier
+        ),
         contentAlignment = Alignment.Center
     ) {
-        // 中央凹槽
         Box(
-            Modifier
-                .size(width = 2.dp, height = 20.dp)
-                .background(Color(0xFF1C1C1E).copy(alpha = 0.4f), RoundedCornerShape(1.dp))
-        )
-    }
-}
-
-/** 起止时间微调卡片：标签 + 大号时间 + ±1秒 步进药丸 */
-@Composable
-private fun TimeStepperCard(
-    modifier: Modifier = Modifier,
-    label: String,
-    timeText: String,
-    onMinus: () -> Unit,
-    onPlus: () -> Unit,
-    enabled: Boolean
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFFF5F5FA))
-            .padding(horizontal = 14.dp, vertical = 7.dp)
-    ) {
-        Text(label, fontSize = 11.sp, color = iOSSecondary, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(1.dp))
-        Text(
-            timeText,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = iOSLabel,
-            fontFamily = FontFamily.Monospace
-        )
-        Spacer(Modifier.height(5.dp))
-        Row {
-            StepperPill("−1秒", enabled, onMinus)
-            Spacer(Modifier.width(8.dp))
-            StepperPill("+1秒", enabled, onPlus)
-        }
-    }
-}
-
-@Composable
-private fun StepperPill(text: String, enabled: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (enabled) Color.White else Color(0xFFEDEDF2))
-            .border(
-                0.5.dp,
-                if (enabled) iOSBlue.copy(alpha = 0.35f) else Color.Transparent,
-                RoundedCornerShape(50)
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(visualWidth)
+                .shadow(
+                    elevation = if (active) 8.dp else 4.dp,
+                    shape = RoundedCornerShape(5.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.4f),
+                    spotColor = Color.Black.copy(alpha = 0.4f)
+                )
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(RoundedCornerShape(5.dp))
+                .background(Color.White),
+            contentAlignment = Alignment.Center
+        ) {
+            // 中央凹槽
+            Box(
+                Modifier
+                    .size(width = 2.dp, height = 20.dp)
+                    .background(Color(0xFF1C1C1E).copy(alpha = 0.4f), RoundedCornerShape(1.dp))
             )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 5.dp)
-    ) {
-        Text(
-            text,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (enabled) iOSBlue else iOSTertiary
-        )
+        }
     }
 }
 
