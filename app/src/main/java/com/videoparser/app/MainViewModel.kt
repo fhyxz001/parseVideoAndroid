@@ -392,6 +392,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clipEndMs = e
     }
 
+    /** 起点 +N 秒快速设定时长：钳制到视频范围并保证最小间隔 */
+    fun setClipDurationFromStart(seconds: Double) {
+        if (clipDurationMs <= 0 || seconds <= 0) return
+        val span = (seconds * 1000).toLong().coerceAtLeast(MIN_CLIP_SPAN_MS)
+        clipEndMs = (clipStartMs + span).coerceAtMost(clipDurationMs)
+        if (clipEndMs - clipStartMs < MIN_CLIP_SPAN_MS) {
+            clipStartMs = (clipEndMs - MIN_CLIP_SPAN_MS).coerceAtLeast(0L)
+        }
+    }
+
     /** 当前解析视频的播放地址（剪辑页播放器用） */
     val clipVideoUrl: String
         get() = parseData?.videoUrl?.trim().orEmpty()

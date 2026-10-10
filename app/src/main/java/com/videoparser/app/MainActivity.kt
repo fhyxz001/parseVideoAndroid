@@ -53,6 +53,13 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -1059,7 +1066,7 @@ fun ClipPage(vm: MainViewModel) {
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "播放视频，一键截取选中的片段",
+                        "点击时间轴设起点，支持输入时间与 +N秒 微调",
                         fontSize = 12.sp,
                         color = iOSSecondary
                     )
@@ -1164,6 +1171,8 @@ private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
         )
         Spacer(Modifier.height(10.dp))
         ClipMarkControls(vm, clipPlayer)
+        Spacer(Modifier.height(8.dp))
+        ClipTimeInputs(vm, clipPlayer)
         Spacer(Modifier.height(10.dp))
     } else {
         // ── 降级：播放器不可用时回到首尾帧静态预览 ──
@@ -1171,7 +1180,8 @@ private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
         Spacer(Modifier.height(10.dp))
     }
 
-    // ── 时间轴缩略图（播放头指示；拖把手 seek 预览） ──
+    // ── 时间轴缩略图（播放头指示；点击设起点，拖动刷视频预览） ──
+    val clipHaptic = LocalHapticFeedback.current
     var resumeAfterDrag by remember { mutableStateOf(false) }
     ClipTimelineStrip(
         durationMs = duration,
@@ -1181,8 +1191,13 @@ private fun ClipEditor(vm: MainViewModel, clipPlayer: ClipPlaybackController) {
         enabled = !vm.isClipping,
         playheadMs = if (playerMode) clipPlayer.positionMs else null,
         allowManualZoom = !playerMode,
-        tapToSeek = playerMode,
         onRangeChanged = { s, e -> vm.setClipRange(s, e) },
+        onTimelineTap = if (playerMode) ({ t ->
+            clipHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            vm.markClipStart(t)
+            clipPlayer.seekTo(t)
+        }) else null,
+        onTimelineScrub = if (playerMode) ({ t -> clipPlayer.seekTo(t) }) else null,
         onSeekPreview = if (playerMode) ({ clipPlayer.seekTo(it) }) else null,
         onDragStateChange = if (playerMode) ({ dragging ->
             if (dragging) {
@@ -1316,8 +1331,9 @@ private fun maxZoomFor(durationMs: Long): Float = (durationMs / 15_000f).coerceI
 
 /**
  * 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手。
- * 支持双指缩放（以手势中心为锚点，放大后单指平移视口、拖把手到边缘自动跟手）。
- * 选区在屏幕上过窄时（拖动把手或点选触发）自动放大，避免长视频下小选区难以微调。
+ * 播放器模式：点击时间轴直接设起点（回调 onTimelineTap），拖动空白区刷视频预览（onTimelineScrub）。
+ * 降级模式：保留双指缩放（以手势中心为锚点）、点选就近移动把手。
+ * 选区在屏幕上过窄时（拖动把手触发）自动放大，避免长视频下小选区难以微调。
  */
 @Composable
 private fun ClipTimelineStrip(
@@ -1328,8 +1344,9 @@ private fun ClipTimelineStrip(
     enabled: Boolean,
     playheadMs: Long? = null,
     allowManualZoom: Boolean = false,
-    tapToSeek: Boolean = false,
     onRangeChanged: (Long, Long) -> Unit,
+    onTimelineTap: ((Long) -> Unit)? = null,
+    onTimelineScrub: ((Long) -> Unit)? = null,
     onSeekPreview: ((Long) -> Unit)? = null,
     onDragStateChange: ((Boolean) -> Unit)? = null
 ) {
@@ -1339,9 +1356,10 @@ private fun ClipTimelineStrip(
     val currentStartMs by rememberUpdatedState(startMs)
     val currentEndMs by rememberUpdatedState(endMs)
     val currentOnRangeChanged by rememberUpdatedState(onRangeChanged)
+    val currentOnTimelineTap by rememberUpdatedState(onTimelineTap)
+    val currentOnTimelineScrub by rememberUpdatedState(onTimelineScrub)
     val currentOnSeekPreview by rememberUpdatedState(onSeekPreview)
     val currentOnDragStateChange by rememberUpdatedState(onDragStateChange)
-    val currentTapToSeek by rememberUpdatedState(tapToSeek)
     var activeHandle by remember { mutableStateOf<Int?>(null) }
     // 缩放倍率与视口偏移（内容像素）；换视频后重置
     var zoom by remember(durationMs) { mutableFloatStateOf(1f) }
@@ -1384,6 +1402,21 @@ private fun ClipTimelineStrip(
                 .background(Color(0xFF14141A))
                 .then(
                     if (enabled) Modifier
+                        // 播放器模式：在时间轴上拖动 = 刷视频预览（把手区域由把手优先消费）
+                        .then(
+                            if (currentOnTimelineScrub != null) Modifier.pointerInput(durationMs) {
+                                detectHorizontalDragGestures(
+                                    onDragStart = { _ -> currentOnDragStateChange?.invoke(true) },
+                                    onDragEnd = { currentOnDragStateChange?.invoke(false) },
+                                    onDragCancel = { currentOnDragStateChange?.invoke(false) }
+                                ) { change, _ ->
+                                    if (!change.isConsumed) {
+                                        val t = msOfContent(change.position.x + scrollX, stripWpx, zoom, durationMs)
+                                        currentOnTimelineScrub?.invoke(t)
+                                    }
+                                }
+                            } else Modifier
+                        )
                         // 双指缩放/平移（仅降级模式保留；播放器模式靠播放定位）
                         .then(
                             if (allowManualZoom) Modifier.pointerInput(durationMs) {
@@ -1409,9 +1442,10 @@ private fun ClipTimelineStrip(
                                 } else null,
                                 onTap = { offset ->
                                     val t = msOfContent(offset.x + scrollX, stripWpx, zoom, durationMs)
-                                    if (currentTapToSeek) {
-                                        // 播放器模式：点时间轴跳转播放位置
-                                        currentOnSeekPreview?.invoke(t)
+                                    val tapCb = currentOnTimelineTap
+                                    if (tapCb != null) {
+                                        // 播放器模式：点击时间轴直接设为起点并跳转播放
+                                        tapCb(t)
                                     } else {
                                         val distStart = kotlin.math.abs(t - currentStartMs)
                                         val distEnd = kotlin.math.abs(currentEndMs - t)
@@ -1735,6 +1769,141 @@ private fun MarkButton(
             Text(symbol, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = iOSBlue)
             Spacer(Modifier.width(5.dp))
             Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = iOSLabel)
+        }
+    }
+}
+
+/** 解析手动输入的时间：支持纯秒数（"75" / "75.5"）与 "mm:ss"、"hh:mm:ss"，返回毫秒 */
+private fun parseClipTimeInput(raw: String): Long? {
+    val s = raw.trim()
+    if (s.isEmpty()) return null
+    return if (s.contains(':')) {
+        val nums = s.split(':').map { it.trim().toDoubleOrNull() ?: return null }
+        val seconds = when (nums.size) {
+            2 -> nums[0] * 60 + nums[1]
+            3 -> nums[0] * 3600 + nums[1] * 60 + nums[2]
+            else -> return null
+        }
+        if (seconds < 0) null else (seconds * 1000).roundToLong()
+    } else {
+        s.toDoubleOrNull()?.takeIf { it >= 0 }?.let { (it * 1000).roundToLong() }
+    }
+}
+
+/** 输入框展示用：秒（保留 1 位小数） */
+private fun secondsInputText(ms: Long): String =
+    String.format(Locale.US, "%.1f", ms / 1000.0)
+
+/** 开始/结束手动输入行 + 起点加 N 秒快速设定时长 */
+@Composable
+private fun ClipTimeInputs(vm: MainViewModel, controller: ClipPlaybackController) {
+    val focusManager = LocalFocusManager.current
+    var editingStart by remember { mutableStateOf(false) }
+    var editingEnd by remember { mutableStateOf(false) }
+    var startText by remember { mutableStateOf(secondsInputText(vm.clipStartMs)) }
+    var endText by remember { mutableStateOf(secondsInputText(vm.clipEndMs)) }
+    var spanText by remember { mutableStateOf("") }
+
+    // 外部选区变化（拖把手/打点按钮）时同步显示，编辑中不回写
+    LaunchedEffect(vm.clipStartMs) { if (!editingStart) startText = secondsInputText(vm.clipStartMs) }
+    LaunchedEffect(vm.clipEndMs) { if (!editingEnd) endText = secondsInputText(vm.clipEndMs) }
+
+    fun applyStart() {
+        parseClipTimeInput(startText)?.let {
+            vm.markClipStart(it)
+            controller.seekTo(vm.clipStartMs)
+        }
+        editingStart = false
+        focusManager.clearFocus()
+    }
+    fun applyEnd() {
+        parseClipTimeInput(endText)?.let { vm.markClipEnd(it) }
+        editingEnd = false
+        focusManager.clearFocus()
+    }
+    fun applySpan() {
+        spanText.trim().removePrefix("+").toDoubleOrNull()?.let { vm.setClipDurationFromStart(it) }
+        focusManager.clearFocus()
+    }
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ClipInputField(
+            modifier = Modifier.weight(1f),
+            label = "开始 秒/分:秒",
+            value = startText,
+            onValueChange = { startText = it },
+            keyboardType = KeyboardType.Ascii,
+            onFocusChanged = { editingStart = it },
+            onApply = ::applyStart
+        )
+        ClipInputField(
+            modifier = Modifier.weight(1f),
+            label = "结束 秒/分:秒",
+            value = endText,
+            onValueChange = { endText = it },
+            keyboardType = KeyboardType.Ascii,
+            onFocusChanged = { editingEnd = it },
+            onApply = ::applyEnd
+        )
+        ClipInputField(
+            modifier = Modifier.weight(1f),
+            label = "起点 +N秒",
+            value = spanText,
+            onValueChange = { spanText = it },
+            keyboardType = KeyboardType.Decimal,
+            onFocusChanged = { },
+            onApply = ::applySpan,
+            hint = "+15"
+        )
+    }
+}
+
+@Composable
+private fun ClipInputField(
+    modifier: Modifier,
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    keyboardType: KeyboardType,
+    onFocusChanged: (Boolean) -> Unit,
+    onApply: () -> Unit,
+    hint: String? = null
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF1C1C22))
+            .padding(horizontal = 10.dp, vertical = 7.dp)
+    ) {
+        Text(label, fontSize = 10.sp, color = iOSSecondary)
+        Box {
+            if (value.isEmpty() && hint != null) {
+                Text(
+                    hint,
+                    fontSize = 14.sp,
+                    color = iOSSecondary.copy(alpha = 0.45f),
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 14.sp,
+                    color = iOSLabel,
+                    fontFamily = FontFamily.Monospace
+                ),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboardType,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(onDone = { onApply() }),
+                cursorBrush = SolidColor(iOSBlue),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { onFocusChanged(it.isFocused) }
+            )
         }
     }
 }
