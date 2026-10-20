@@ -720,10 +720,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MIN_CLIP_SPAN_MS = 1000L
 
         /** 默认快捷截取时长（秒） */
-        const val DEFAULT_CLIP_PRESET_SEC = 10
+        const val DEFAULT_CLIP_PRESET_SEC = 20
 
         /** 快捷截取时长选项（秒） */
-        val CLIP_PRESET_SECONDS = listOf(5, 10, 15)
+        val CLIP_PRESET_SECONDS = listOf(20, 60, 120)
 
         private const val CLIP_THUMB_COUNT = 16
         private const val THUMB_WORKERS = 3

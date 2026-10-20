@@ -1196,7 +1196,7 @@ private fun ClipEditor(vm: MainViewModel) {
 
 /**
  * 快速截取设置区（核心操作区）：
- * 开始时间（可点击精确输入）+ 快捷截取时长（5/10/15/30/自定义）+ 片段信息。
+ * 开始时间（可点击精确输入）+ 快捷截取时长（20/60/120/自定义）+ 片段信息。
  */
 @Composable
 private fun ClipQuickSettings(vm: MainViewModel) {
