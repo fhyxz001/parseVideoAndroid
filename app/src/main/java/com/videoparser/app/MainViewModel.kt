@@ -130,6 +130,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         serverDraft = value
     }
 
+    /** 选中预设服务器：仅填入输入框，仍需点击保存生效 */
+    fun selectServerPreset(url: String) {
+        serverDraft = url
+    }
+
     fun saveServerSettings() {
         val value = serverDraft.trim().trimEnd('/')
         when {

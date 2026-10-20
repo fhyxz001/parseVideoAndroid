@@ -290,7 +290,9 @@ fun VideoParserScreen(vm: MainViewModel) {
         if (vm.showServerSettings) {
             ServerSettingsDialog(
                 serverDraft = vm.serverDraft,
+                presets = VideoApi.SERVER_PRESETS,
                 onUrlChange = vm::onServerDraftChanged,
+                onPresetSelect = vm::selectServerPreset,
                 onSave = vm::saveServerSettings,
                 onReset = vm::resetServerSettings,
                 onDismiss = vm::dismissServerSettings
@@ -956,7 +958,9 @@ fun PressButton(
 @Composable
 fun ServerSettingsDialog(
     serverDraft: String,
+    presets: List<String>,
     onUrlChange: (String) -> Unit,
+    onPresetSelect: (String) -> Unit,
     onSave: () -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit
@@ -972,6 +976,29 @@ fun ServerSettingsDialog(
                     lineHeight = 18.sp,
                     color = iOSSecondary
                 )
+                if (presets.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "常用服务器",
+                        fontSize = 13.sp,
+                        color = iOSSecondary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        presets.forEach { preset ->
+                            ServerPresetChip(
+                                label = serverHostLabel(preset),
+                                selected = serverDraft.trim().trimEnd('/')
+                                    .equals(preset, ignoreCase = true)
+                            ) { onPresetSelect(preset) }
+                        }
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = serverDraft,
@@ -1004,6 +1031,33 @@ fun ServerSettingsDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
+}
+
+/** 服务器地址去掉协议前缀，仅用于 chip 展示 */
+private fun serverHostLabel(url: String): String =
+    url.trim().removePrefix("http://").removePrefix("https://").trimEnd('/')
+
+/** 服务器预设 chip：选中高亮，点击填入地址输入框 */
+@Composable
+private fun ServerPresetChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) iOSBlue else iOSBgBase)
+            .then(
+                if (selected) Modifier
+                else Modifier.border(1.dp, iOSSeparator, RoundedCornerShape(50))
+            )
+            .clickable(interactionSource = null, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (selected) Color.White else iOSLabel
+        )
+    }
 }
 
 /* ═══════════════════════ Clip Download UI ═════════════════════════════════ */

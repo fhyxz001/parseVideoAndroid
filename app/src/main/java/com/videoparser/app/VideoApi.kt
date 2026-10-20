@@ -27,6 +27,12 @@ object VideoApi {
     /** 默认解析服务器地址 */
     const val DEFAULT_SERVER = "http://122.51.115.245:8888"
 
+    /** 备用解析服务器地址 */
+    const val BACKUP_SERVER = "http://39.101.129.76:8080"
+
+    /** 解析服务器预设选项（顺序即界面展示顺序，首个为默认） */
+    val SERVER_PRESETS = listOf(DEFAULT_SERVER, BACKUP_SERVER)
+
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
