@@ -130,35 +130,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         serverDraft = value
     }
 
-    /** 选中预设服务器：仅填入输入框，仍需点击保存生效 */
-    fun selectServerPreset(url: String) {
-        serverDraft = url
-    }
-
     fun saveServerSettings() {
         val value = serverDraft.trim().trimEnd('/')
         when {
-            value.isBlank() -> toast("服务器地址不能为空")
-            !value.startsWith("http://") && !value.startsWith("https://") ->
+            value.isNotEmpty() &&
+                !value.startsWith("http://") && !value.startsWith("https://") ->
                 toast("地址需以 http:// 或 https:// 开头")
             else -> {
                 SettingsStore.setServer(getApplication(), value)
                 serverUrl = value
                 showServerSettings = false
-                toast("服务器地址已保存")
+                toast(if (value.isEmpty()) "已清空服务器地址" else "服务器地址已保存")
             }
         }
-    }
-
-    fun resetServerSettings() {
-        serverDraft = VideoApi.DEFAULT_SERVER
-        toast("已填入默认地址，点击保存生效")
     }
 
     fun parse() {
         val url = videoUrl.trim()
         if (url.isEmpty()) {
             toast("请输入链接")
+            return
+        }
+        if (serverUrl.isBlank()) {
+            toast("请先设置解析服务器地址")
+            openServerSettings()
             return
         }
         isParsing = true

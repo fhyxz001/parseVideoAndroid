@@ -24,23 +24,17 @@ sealed class ParseResult {
 
 object VideoApi {
 
-    /** 默认解析服务器地址 */
-    const val DEFAULT_SERVER = "http://122.51.115.245:8888"
-
-    /** 备用解析服务器地址 */
-    const val BACKUP_SERVER = "http://39.101.129.76:8080"
-
-    /** 解析服务器预设选项（顺序即界面展示顺序，首个为默认） */
-    val SERVER_PRESETS = listOf(DEFAULT_SERVER, BACKUP_SERVER)
-
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    suspend fun parse(url: String, baseUrl: String = DEFAULT_SERVER): ParseResult = withContext(Dispatchers.IO) {
+    suspend fun parse(url: String, baseUrl: String): ParseResult = withContext(Dispatchers.IO) {
         try {
-            val base = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
+            val base = baseUrl.trim().trimEnd('/')
+            if (base.isEmpty()) {
+                return@withContext ParseResult.Error("请先在设置中填写解析服务器地址")
+            }
             val encoded = URLEncoder.encode(url.trim(), "UTF-8")
             val request = Request.Builder()
                 .url("$base/video/share/url/parse?url=$encoded")

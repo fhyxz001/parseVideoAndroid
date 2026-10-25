@@ -10,7 +10,7 @@ object SettingsStore {
 
     fun getServer(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_SERVER, VideoApi.DEFAULT_SERVER) ?: VideoApi.DEFAULT_SERVER
+        return prefs.getString(KEY_SERVER, "") ?: ""
     }
 
     fun setServer(context: Context, value: String) {
