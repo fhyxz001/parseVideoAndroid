@@ -7,6 +7,7 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
@@ -64,15 +65,23 @@ object VideoClipper {
     private const val TAIL_BYTES = 16L * 1024 * 1024
 
     /** 探测视频元数据。永不抛异常，失败一律转 Fallback。 */
-    suspend fun probe(url: String): ClipProbe = withContext(Dispatchers.IO) {
-        val fileSize = VideoDownloader.fetchVideoSize(url.trim())
+    suspend fun probe(url: String, knownFileSize: Long = 0L): ClipProbe = withContext(Dispatchers.IO) {
+        val target = url.trim()
+        var fileSize = knownFileSize
         try {
-            // 头部拉取：无论是否支持 Range 都能读到开头一段
-            val head = fetchHead(url, HEAD_BYTES)
+            // 文件大小与头部字节并行拉取（已知大小时省去一次网络请求），缩短进入剪辑页的等待
+            val head: ByteArray
+            if (fileSize > 0) {
+                head = fetchHead(target, HEAD_BYTES)
+            } else {
+                val headDeferred = async { fetchHead(target, HEAD_BYTES) }
+                fileSize = VideoDownloader.fetchVideoSize(target)
+                head = headDeferred.await()
+            }
             val scan = Mp4FileLocator.scanHead(head)
 
             if (scan.hasMoof) {
-                return@withContext ClipProbe.Fallback(frameworkDurationMs(url), fileSize, "分片式 MP4")
+                return@withContext ClipProbe.Fallback(frameworkDurationMs(target), fileSize, "分片式 MP4")
             }
 
             // 头部 moov 完整 -> 直接解析
@@ -81,27 +90,27 @@ object VideoClipper {
                     val parsed = Mp4Parser.parse(scan.ftypBox ?: ByteArray(0), moov)
                     toReady(parsed, fileSize)
                 } catch (e: Exception) {
-                    ClipProbe.Fallback(frameworkDurationMs(url), fileSize, "元数据解析失败")
+                    ClipProbe.Fallback(frameworkDurationMs(target), fileSize, "元数据解析失败")
                 }
             }
 
             // moov 被截断：需要精确补拉，必须支持 Range
-            if (scan.moovStart >= 0 && scan.moovSize > 0 && supportsRange(url)) {
-                val moovBytes = fetchExactRange(url, scan.moovStart, scan.moovSize)
+            if (scan.moovStart >= 0 && scan.moovSize > 0 && supportsRange(target)) {
+                val moovBytes = fetchExactRange(target, scan.moovStart, scan.moovSize)
                 if (moovBytes != null) {
                     return@withContext try {
                         val parsed = Mp4Parser.parse(scan.ftypBox ?: ByteArray(0), moovBytes)
                         toReady(parsed, fileSize)
                     } catch (e: Exception) {
-                        ClipProbe.Fallback(frameworkDurationMs(url), fileSize, "元数据解析失败")
+                        ClipProbe.Fallback(frameworkDurationMs(target), fileSize, "元数据解析失败")
                     }
                 }
             }
 
             // moov 可能整个在尾部：从文件末尾搜索
-            if (fileSize > 0 && supportsRange(url)) {
+            if (fileSize > 0 && supportsRange(target)) {
                 val tailStart = maxOf(0L, fileSize - TAIL_BYTES)
-                val tail = fetchExactRange(url, tailStart, fileSize - tailStart)
+                val tail = fetchExactRange(target, tailStart, fileSize - tailStart)
                 val located = tail?.let { Mp4FileLocator.locateMoovInTail(it, tailStart, fileSize) }
                 if (tail != null && located != null) {
                     val (moovStart, moovSize) = located
@@ -110,7 +119,7 @@ object VideoClipper {
                         val from = (moovStart - tailStart).toInt()
                         Mp4BoxIo.copy(tail, from, (from + moovSize).toInt())
                     } else {
-                        fetchExactRange(url, moovStart, moovSize)
+                        fetchExactRange(target, moovStart, moovSize)
                     }
                     if (moovBytes != null) {
                         return@withContext try {
@@ -120,29 +129,17 @@ object VideoClipper {
                             )
                             toReady(parsed, fileSize)
                         } catch (e: Exception) {
-                            ClipProbe.Fallback(frameworkDurationMs(url), fileSize, "元数据解析失败")
+                            ClipProbe.Fallback(frameworkDurationMs(target), fileSize, "元数据解析失败")
                         }
                     }
                 }
             }
 
-            ClipProbe.Fallback(frameworkDurationMs(url), fileSize, "无法定位视频元数据")
+            ClipProbe.Fallback(frameworkDurationMs(target), fileSize, "无法定位视频元数据")
         } catch (e: Exception) {
-            ClipProbe.Fallback(frameworkDurationMs(url), fileSize, "网络异常")
+            ClipProbe.Fallback(frameworkDurationMs(target), fileSize, "网络异常")
         }
     }
-
-    /** 关键帧吸附后的实际窗口（Ready 时给出真实值，供 UI 预览） */
-    fun snappedWindowMs(probe: ClipProbe, startMs: Long, endMs: Long): Pair<Long, Long> =
-        if (probe is ClipProbe.Ready) {
-            try {
-                Mp4Clipper.snappedWindowMs(probe.parsed, startMs, endMs)
-            } catch (e: Exception) {
-                startMs to endMs
-            }
-        } else {
-            startMs to endMs
-        }
 
     /**
      * 剪辑并保存到相册。onPhase 报告阶段，onPercent 报告 0~100 的整体进度。

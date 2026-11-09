@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -28,45 +30,33 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.*
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import androidx.compose.ui.res.painterResource
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import coil.compose.AsyncImage
 import kotlinx.coroutines.flow.collectLatest
 import java.util.Locale
-import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 class MainActivity : ComponentActivity() {
@@ -112,9 +102,6 @@ private val iOSSecondary  = Color(0xFF3C3C43).copy(alpha = 0.6f)
 private val iOSTertiary   = Color(0xFF3C3C43).copy(alpha = 0.3f)
 private val iOSPlaceholder = Color(0xFF3C3C43).copy(alpha = 0.3f)
 private val iOSSeparator  = Color(0xFF3C3C43).copy(alpha = 0.15f)
-
-// 媒体画布（预览/时间轴）
-private val MediaSurface  = Color(0xFF16161C)
 
 // Glass
 private val GlassWhite    = Color(0xFFFFFFFF).copy(alpha = 0.78f)
@@ -1071,28 +1058,7 @@ fun ClipPage(vm: MainViewModel) {
                 ClipBottomBar(vm)
             }
         }
-
-        // 帧图片保存确认弹窗
-        if (vm.showFrameSaveDialog) {
-            FrameSaveDialog(vm)
-        }
     }
-}
-
-@Composable
-private fun FrameSaveDialog(vm: MainViewModel) {
-    val side = if (vm.frameSaveIsStart) "首帧" else "尾帧"
-    AlertDialog(
-        onDismissRequest = vm::dismissFrameSaveDialog,
-        title = { Text("保存${side}图片", fontWeight = FontWeight.SemiBold) },
-        text = { Text("是否将该画面保存到本地相册？") },
-        confirmButton = {
-            TextButton(onClick = vm::confirmSaveFrame) { Text("保存") }
-        },
-        dismissButton = {
-            TextButton(onClick = vm::dismissFrameSaveDialog) { Text("取消") }
-        }
-    )
 }
 
 @Composable
@@ -1144,47 +1110,24 @@ private fun ClipUnavailableView() {
 
 @Composable
 private fun ClipEditor(vm: MainViewModel) {
-    val duration = vm.clipDurationMs
-    val startMs = vm.clipStartMs
-    val endMs = vm.clipEndMs
-
-    // ── 预览：首尾帧静态画面（拖动起止点时实时刷新） ──
-    ClipFramePreviews(vm)
-    Spacer(Modifier.height(14.dp))
-
-    // ── 快速截取设置：开始时间 + 快捷时长 + 片段信息 ──
+    // ── 快速截取设置：开始时间（时/分/秒）+ 快捷时长 + 片段信息 ──
     ClipQuickSettings(vm)
-    Spacer(Modifier.height(16.dp))
-
-    // ── 片段选择时间轴：拖动开始/结束手柄调整范围 ──
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("片段时间轴", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = iOSSecondary)
-        Text("拖动两端手柄调整范围", fontSize = 11.sp, color = iOSSecondary.copy(alpha = 0.75f))
-    }
-    Spacer(Modifier.height(8.dp))
-    ClipTimelineStrip(
-        durationMs = duration,
-        startMs = startMs,
-        endMs = endMs,
-        thumbs = vm.clipThumbs,
-        enabled = !vm.isClipping,
-        allowManualZoom = true,
-        onStartHandleDrag = { t -> vm.setClipStartKeepingDuration(t) },
-        onEndHandleDrag = { t -> vm.setClipEndManual(t) }
+    Spacer(Modifier.height(14.dp))
+    Text(
+        "提示：为保证画面可独立解码，起点会自动对齐到最近关键帧，实际剪出的区间可能略有偏差。",
+        fontSize = 11.sp,
+        lineHeight = 17.sp,
+        color = iOSSecondary.copy(alpha = 0.75f),
+        modifier = Modifier.padding(horizontal = 4.dp)
     )
 }
 
 /**
  * 快速截取设置区（核心操作区）：
- * 开始时间（可点击精确输入）+ 快捷截取时长（20/60/120/自定义）+ 片段信息。
+ * 开始时间（时 / 分 / 秒 三个输入框，默认 0）+ 快捷截取时长（20/60/120/自定义）+ 片段信息。
  */
 @Composable
 private fun ClipQuickSettings(vm: MainViewModel) {
-    var showStartInput by remember { mutableStateOf(false) }
     var showCustomInput by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
 
@@ -1196,43 +1139,25 @@ private fun ClipQuickSettings(vm: MainViewModel) {
             .border(1.dp, iOSSeparator, RoundedCornerShape(20.dp))
             .padding(16.dp)
     ) {
-        // 开始时间：点击进入精确输入
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(iOSBgBase)
-                .clickable(interactionSource = null, indication = null) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    showStartInput = true
-                }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("开始时间", fontSize = 11.sp, color = iOSSecondary)
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    formatClipSeconds(vm.clipStartMs),
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = iOSLabel,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = (-0.5).sp
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(iOSBlue.copy(alpha = 0.12f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("精确输入", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = iOSBlue)
-                Spacer(Modifier.width(2.dp))
-                Text("›", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = iOSBlue)
-            }
+            Text("开始时间", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = iOSSecondary)
+            Text(
+                "视频时长 ${formatClipTime(vm.clipDurationMs)}",
+                fontSize = 11.sp,
+                color = iOSSecondary.copy(alpha = 0.75f)
+            )
         }
+        Spacer(Modifier.height(10.dp))
+
+        // 时 / 分 / 秒 三个输入框，默认 0，输入即联动结束时间
+        ClipStartTimeFields(
+            startMs = vm.clipStartMs,
+            onStartChanged = vm::setClipStartKeepingDuration
+        )
         Spacer(Modifier.height(16.dp))
 
         Text("截取时长", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = iOSSecondary)
@@ -1270,7 +1195,7 @@ private fun ClipQuickSettings(vm: MainViewModel) {
                 Text("片段范围", fontSize = 11.sp, color = iOSSecondary)
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "${formatClipSeconds(vm.clipStartMs)} — ${formatClipSeconds(vm.clipEndMs)}",
+                    "${formatClipTime(vm.clipStartMs)} — ${formatClipTime(vm.clipEndMs)}",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = iOSLabel,
@@ -1293,33 +1218,188 @@ private fun ClipQuickSettings(vm: MainViewModel) {
         }
     }
 
-    if (showStartInput) {
-        ClipInputDialog(
-            title = "输入开始时间",
-            label = "秒 / 分:秒 / 时:分:秒",
-            hint = "例如 32.5 或 1:05",
-            initialText = secondsInputText(vm.clipStartMs),
-            keyboardType = KeyboardType.Ascii,
-            parse = { raw -> parseClipSeconds(raw) },
-            onApply = { sec ->
-                val ms = (sec * 1000).roundToLong()
-                vm.setClipStartKeepingDuration(ms)
-            },
-            onDismiss = { showStartInput = false }
-        )
-    }
     if (showCustomInput) {
-        ClipInputDialog(
-            title = "自定义截取时长",
-            label = "截取秒数",
-            hint = "例如 12.5",
-            initialText = String.format(Locale.US, "%.1f", vm.clipSelectedSeconds),
-            keyboardType = KeyboardType.Decimal,
-            parse = { raw -> parseClipSeconds(raw)?.takeIf { it > 0 } },
+        ClipCustomDurationDialog(
+            initialSeconds = vm.clipSelectedSeconds,
             onApply = { sec -> vm.applyClipCustomDuration(sec) },
             onDismiss = { showCustomInput = false }
         )
     }
+}
+
+/**
+ * 开始时间输入：时 / 分 / 秒 三个独立输入框，默认 0。
+ * 输入时按当前内容实时联动结束时间；失去焦点后回填实际生效的时间（超出视频范围会自动收敛）。
+ */
+@Composable
+private fun ClipStartTimeFields(
+    startMs: Long,
+    onStartChanged: (Long) -> Unit
+) {
+    var hoursText by remember { mutableStateOf("0") }
+    var minutesText by remember { mutableStateOf("0") }
+    var secondsText by remember { mutableStateOf("0") }
+    var hoursFocused by remember { mutableStateOf(false) }
+    var minutesFocused by remember { mutableStateOf(false) }
+    var secondsFocused by remember { mutableStateOf(false) }
+    val anyFocused = hoursFocused || minutesFocused || secondsFocused
+
+    fun enteredMs(): Long {
+        val h = hoursText.toLongOrNull() ?: 0L
+        val m = minutesText.toLongOrNull() ?: 0L
+        val s = secondsText.toLongOrNull() ?: 0L
+        return (h * 3600L + m * 60L + s) * 1000L
+    }
+
+    fun applyEntered() {
+        onStartChanged(enteredMs())
+    }
+
+    // 外部时间变化（首次探测/重置/超范围收敛）且当前没有输入焦点时，回填到输入框
+    LaunchedEffect(startMs, anyFocused) {
+        if (!anyFocused) {
+            val totalSec = startMs.coerceAtLeast(0L) / 1000
+            hoursText = (totalSec / 3600).toString()
+            minutesText = ((totalSec % 3600) / 60).toString()
+            secondsText = (totalSec % 60).toString()
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        ClipTimeField(
+            value = hoursText,
+            placeholder = "0",
+            unit = "时",
+            modifier = Modifier.weight(1f),
+            onFocusChanged = { hoursFocused = it },
+            onValueChange = { raw ->
+                hoursText = normalizeTimePart(raw, maxValue = 99, maxDigits = 2)
+                applyEntered()
+            }
+        )
+        ClipTimeField(
+            value = minutesText,
+            placeholder = "0",
+            unit = "分",
+            modifier = Modifier.weight(1f),
+            onFocusChanged = { minutesFocused = it },
+            onValueChange = { raw ->
+                minutesText = normalizeTimePart(raw, maxValue = 59, maxDigits = 2)
+                applyEntered()
+            }
+        )
+        ClipTimeField(
+            value = secondsText,
+            placeholder = "0",
+            unit = "秒",
+            modifier = Modifier.weight(1f),
+            onFocusChanged = { secondsFocused = it },
+            onValueChange = { raw ->
+                secondsText = normalizeTimePart(raw, maxValue = 59, maxDigits = 2)
+                applyEntered()
+            }
+        )
+    }
+
+    if (anyFocused && enteredMs() != startMs) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "超出视频范围，将从 ${formatClipTime(startMs)} 开始截取",
+            fontSize = 11.sp,
+            color = Color(0xFFFF9500)
+        )
+    }
+}
+
+/** 单个时间输入框：数字键盘 + 居中大号数字 + 单位标签 */
+@Composable
+private fun ClipTimeField(
+    value: String,
+    placeholder: String,
+    unit: String,
+    modifier: Modifier = Modifier,
+    onFocusChanged: (Boolean) -> Unit,
+    onValueChange: (String) -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(iOSBgBase)
+                .border(
+                    width = if (focused) 1.5.dp else 1.dp,
+                    color = if (focused) iOSBlue else iOSSeparator,
+                    shape = RoundedCornerShape(14.dp)
+                )
+                // 输入框外的留白区域也能点击聚焦，避免必须精准点中数字
+                .clickable(interactionSource = null, indication = null) {
+                    focusRequester.requestFocus()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp)
+                    .focusRequester(focusRequester)
+                    .onFocusChanged {
+                        focused = it.isFocused
+                        onFocusChanged(it.isFocused)
+                    },
+                textStyle = TextStyle(
+                    color = iOSLabel,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center
+                ),
+                singleLine = true,
+                cursorBrush = SolidColor(iOSBlue),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Next
+                ),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (value.isEmpty()) {
+                            Text(
+                                placeholder,
+                                color = iOSPlaceholder,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        inner()
+                    }
+                }
+            )
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(unit, fontSize = 11.sp, color = iOSSecondary)
+    }
+}
+
+/** 时间片段输入规范化：仅保留数字，限制位数与最大值 */
+private fun normalizeTimePart(raw: String, maxValue: Int, maxDigits: Int): String {
+    val digits = raw.filter { it.isDigit() }.take(maxDigits)
+    if (digits.isEmpty()) return ""
+    return digits.toInt().coerceAtMost(maxValue).toString()
 }
 
 /** 快捷时长药丸：选中态主色填充 + 柔和投影，未选中为浅底描边 */
@@ -1353,25 +1433,20 @@ private fun DurationChip(label: String, selected: Boolean, onClick: () -> Unit) 
     }
 }
 
-/** 时间/时长输入弹窗：确认时才做合法性校验，输入过程中不重置内容 */
+/** 自定义截取时长输入弹窗：确认时才做合法性校验，输入过程中不重置内容 */
 @Composable
-private fun ClipInputDialog(
-    title: String,
-    label: String,
-    hint: String,
-    initialText: String,
-    keyboardType: KeyboardType,
-    parse: (String) -> Double?,
+private fun ClipCustomDurationDialog(
+    initialSeconds: Double,
     onApply: (Double) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var text by remember { mutableStateOf(initialText) }
+    var text by remember { mutableStateOf(String.format(Locale.US, "%.1f", initialSeconds)) }
     var error by remember { mutableStateOf<String?>(null) }
 
     fun confirm() {
-        val value = parse(text)
-        if (value == null) {
-            error = "请输入有效的时间"
+        val value = text.trim().toDoubleOrNull()
+        if (value == null || value <= 0) {
+            error = "请输入有效的秒数"
         } else {
             onApply(value)
             onDismiss()
@@ -1380,7 +1455,7 @@ private fun ClipInputDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title, fontWeight = FontWeight.SemiBold) },
+        title = { Text("自定义截取时长", fontWeight = FontWeight.SemiBold) },
         text = {
             Column {
                 OutlinedTextField(
@@ -1390,11 +1465,11 @@ private fun ClipInputDialog(
                         error = null
                     },
                     singleLine = true,
-                    label = { Text(label) },
-                    placeholder = { Text(hint) },
+                    label = { Text("截取秒数") },
+                    placeholder = { Text("例如 12.5") },
                     isError = error != null,
                     keyboardOptions = KeyboardOptions(
-                        keyboardType = keyboardType,
+                        keyboardType = KeyboardType.Decimal,
                         imeAction = ImeAction.Done
                     ),
                     keyboardActions = KeyboardActions(onDone = { confirm() }),
@@ -1593,21 +1668,6 @@ private fun openClipResult(context: Context, fileName: String) {
     runCatching { context.startActivity(intent) }
 }
 
-/** 时间轴时间显示：mm:ss.d（带一位小数，便于秒级微调） */
-private fun formatClipSeconds(ms: Long): String {
-    val totalTenths = (ms.coerceAtLeast(0L) + 50) / 100
-    val totalSec = totalTenths / 10
-    val tenth = totalTenths % 10
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) {
-        String.format(Locale.US, "%d:%02d:%02d.%d", h, m, s, tenth)
-    } else {
-        String.format(Locale.US, "%02d:%02d.%d", m, s, tenth)
-    }
-}
-
 /** 时长展示：整秒省略小数（10 秒 / 7.5 秒） */
 private fun formatSecondsShort(seconds: Double): String {
     val rounded = (seconds * 10).roundToLong() / 10.0
@@ -1615,571 +1675,6 @@ private fun formatSecondsShort(seconds: Double): String {
         "${rounded.toLong()} 秒"
     } else {
         String.format(Locale.US, "%.1f 秒", rounded)
-    }
-}
-
-/** 时间轴最大缩放倍率：随视频时长自适应，保证放大到顶时视口至少跨约 15 秒，长视频也能精细选段 */
-private fun maxZoomFor(durationMs: Long): Float = (durationMs / 15_000f).coerceIn(20f, 120f)
-
-/**
- * 双滑块时间轴：缩略图条 + 选区高亮 + 可拖拽把手。
- * 播放器模式：点击时间轴跳转播放位置（onTimelineTap），拖动空白区刷视频预览（onTimelineScrub）。
- * 拖动开始手柄保持当前时长、结束时间联动（onStartHandleDrag）；拖动结束手柄重算时长（onEndHandleDrag）。
- * 降级模式：保留双指缩放（以手势中心为锚点），点击就近移动对应手柄。
- * 选区在屏幕上过窄时（拖动把手触发）自动放大，避免长视频下小选区难以微调。
- */
-@Composable
-private fun ClipTimelineStrip(
-    durationMs: Long,
-    startMs: Long,
-    endMs: Long,
-    thumbs: List<ImageBitmap?>,
-    enabled: Boolean,
-    playheadMs: Long? = null,
-    allowManualZoom: Boolean = false,
-    onStartHandleDrag: (Long) -> Unit,
-    onEndHandleDrag: (Long) -> Unit,
-    onTimelineTap: ((Long) -> Unit)? = null,
-    onTimelineScrub: ((Long) -> Unit)? = null,
-    onSeekPreview: ((Long) -> Unit)? = null,
-    onDragStateChange: ((Boolean) -> Unit)? = null
-) {
-    val haptic = LocalHapticFeedback.current
-    val density = LocalDensity.current
-    // pointerInput 不随重组重启，用 rememberUpdatedState 保证手势回调读到最新值
-    val currentStartMs by rememberUpdatedState(startMs)
-    val currentEndMs by rememberUpdatedState(endMs)
-    val currentOnStartHandleDrag by rememberUpdatedState(onStartHandleDrag)
-    val currentOnEndHandleDrag by rememberUpdatedState(onEndHandleDrag)
-    val currentOnTimelineTap by rememberUpdatedState(onTimelineTap)
-    val currentOnTimelineScrub by rememberUpdatedState(onTimelineScrub)
-    val currentOnSeekPreview by rememberUpdatedState(onSeekPreview)
-    val currentOnDragStateChange by rememberUpdatedState(onDragStateChange)
-    var activeHandle by remember { mutableStateOf<Int?>(null) }
-    // 缩放倍率与视口偏移（内容像素）；换视频后重置
-    var zoom by remember(durationMs) { mutableFloatStateOf(1f) }
-    var scrollX by remember(durationMs) { mutableFloatStateOf(0f) }
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(88.dp)
-    ) {
-        val stripWpx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
-        val handleW = 14.dp
-        val handleWpx = with(density) { handleW.toPx() }
-        // 手柄视觉宽度保持纤细，但触摸区域加宽到 40dp，避免竖屏下难以精确拖动
-        val handleTouchW = 40.dp
-        val handleTouchWpx = with(density) { handleTouchW.toPx() }
-        val edgeMarginPx = with(density) { 20.dp.toPx() }
-        val maxZoom = maxZoomFor(durationMs)
-
-        // 选区在屏幕上不足 40% 宽时自动放大到约 55%，锚点（anchorScreenX）保持不动，
-        // 解决长视频下小选区把手重叠、难以精确拖动的问题
-        fun autoZoomForNarrowSelection(selStartMs: Long, selEndMs: Long, anchorMs: Long, anchorScreenX: Float) {
-            if (durationMs <= 0L) return
-            val selFrac = (selEndMs - selStartMs).toFloat() / durationMs
-            if (selFrac <= 0f || selFrac * zoom >= 0.4f) return
-            val target = (0.55f / selFrac).coerceIn(zoom, maxZoom)
-            if (target <= zoom * 1.001f) return
-            zoom = target
-            scrollX = (contentOfMs(anchorMs, stripWpx, target, durationMs) - anchorScreenX)
-                .coerceIn(0f, (stripWpx * target - stripWpx).coerceAtLeast(0f))
-        }
-
-        val startContentPx = contentOfMs(startMs, stripWpx, zoom, durationMs)
-        val endContentPx = contentOfMs(endMs, stripWpx, zoom, durationMs)
-        val selLeftScreen = startContentPx - scrollX
-        val selWidthScreen = (endContentPx - startContentPx).coerceAtLeast(handleWpx)
-        val selRightScreen = selLeftScreen + selWidthScreen
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(16.dp))
-                .background(MediaSurface)
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
-                .then(
-                    if (enabled) Modifier
-                        // 播放器模式：在时间轴上拖动 = 刷视频预览（把手区域由把手优先消费）
-                        .then(
-                            if (currentOnTimelineScrub != null) Modifier.pointerInput(durationMs) {
-                                detectHorizontalDragGestures(
-                                    onDragStart = { _ -> currentOnDragStateChange?.invoke(true) },
-                                    onDragEnd = { currentOnDragStateChange?.invoke(false) },
-                                    onDragCancel = { currentOnDragStateChange?.invoke(false) }
-                                ) { change, _ ->
-                                    if (!change.isConsumed) {
-                                        val t = msOfContent(change.position.x + scrollX, stripWpx, zoom, durationMs)
-                                        currentOnTimelineScrub?.invoke(t)
-                                    }
-                                }
-                            } else Modifier
-                        )
-                        // 双指缩放/平移（仅降级模式保留；播放器模式靠播放定位）
-                        .then(
-                            if (allowManualZoom) Modifier.pointerInput(durationMs) {
-                                detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                                    if (gestureZoom != 1f) {
-                                        val newZoom = (zoom * gestureZoom).coerceIn(1f, maxZoom)
-                                        val newContentW = stripWpx * newZoom
-                                        val tAtCentroid = (centroid.x + scrollX) / (stripWpx * zoom) * durationMs
-                                        scrollX = (tAtCentroid / durationMs * newContentW - centroid.x)
-                                            .coerceIn(0f, (newContentW - stripWpx).coerceAtLeast(0f))
-                                        zoom = newZoom
-                                    } else if (zoom > 1.01f && pan.x != 0f) {
-                                        scrollX = (scrollX - pan.x)
-                                            .coerceIn(0f, (stripWpx * zoom - stripWpx).coerceAtLeast(0f))
-                                    }
-                                }
-                            } else Modifier
-                        )
-                        .pointerInput(durationMs) {
-                            detectTapGestures(
-                                onDoubleTap = if (allowManualZoom) {
-                                    { zoom = 1f; scrollX = 0f }
-                                } else null,
-                                onTap = { offset ->
-                                    val t = msOfContent(offset.x + scrollX, stripWpx, zoom, durationMs)
-                                    val tapCb = currentOnTimelineTap
-                                    if (tapCb != null) {
-                                        // 播放器模式：点击时间轴跳转播放位置
-                                        tapCb(t)
-                                    } else {
-                                        // 降级模式：点击就近移动对应手柄
-                                        val distStart = kotlin.math.abs(t - currentStartMs)
-                                        val distEnd = kotlin.math.abs(currentEndMs - t)
-                                        if (distStart <= distEnd) {
-                                            currentOnStartHandleDrag(t)
-                                            autoZoomForNarrowSelection(t, currentEndMs, t, offset.x)
-                                        } else {
-                                            currentOnEndHandleDrag(t)
-                                            autoZoomForNarrowSelection(currentStartMs, t, t, offset.x)
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    else Modifier
-                )
-        ) {
-            // 缩略图
-            Row(modifier = Modifier.fillMaxSize()) {
-                if (thumbs.isEmpty()) {
-                    PulsingPlaceholder(modifier = Modifier.fillMaxSize())
-                } else {
-                    thumbs.forEach { thumb ->
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            if (thumb != null) {
-                                Image(
-                                    bitmap = thumb,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Box(Modifier.fillMaxSize().background(Color(0xFF2C2C2E)))
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 选区内轻微提亮
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .absoluteOffset { IntOffset(selLeftScreen.roundToInt(), 0) }
-                    .width(with(density) { selWidthScreen.coerceAtLeast(0f).toDp() })
-                    .background(iOSBlue.copy(alpha = 0.18f))
-            )
-
-            // 选区外的压暗层
-            if (selLeftScreen > 0f) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(with(density) { selLeftScreen.coerceAtMost(stripWpx).toDp() })
-                        .background(Color.Black.copy(alpha = 0.5f))
-                )
-            }
-            if (selRightScreen < stripWpx) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .align(Alignment.CenterEnd)
-                        .width(with(density) { (stripWpx - selRightScreen).coerceAtLeast(0f).toDp() })
-                        .background(Color.Black.copy(alpha = 0.5f))
-                )
-            }
-
-            // 选区边框
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .absoluteOffset { IntOffset(selLeftScreen.roundToInt(), 0) }
-                    .width(with(density) { selWidthScreen.toDp() })
-                    .border(2.dp, Color.White, RoundedCornerShape(12.dp))
-            )
-
-            // 播放头指示线
-            if (playheadMs != null) {
-                val phScreenX = contentOfMs(playheadMs, stripWpx, zoom, durationMs) - scrollX
-                if (phScreenX >= -2f && phScreenX <= stripWpx + 2f) {
-                    Box(
-                        Modifier
-                            .fillMaxHeight()
-                            .absoluteOffset { IntOffset(phScreenX.roundToInt() - 1, 0) }
-                            .width(2.dp)
-                            .background(Color(0xFFFFD60A))
-                    )
-                }
-            }
-
-            // 左把手
-            ClipHandle(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .absoluteOffset { IntOffset((selLeftScreen - handleTouchWpx / 2).roundToInt(), 0) }
-                    .width(handleTouchW),
-                visualWidth = handleW,
-                enabled = enabled,
-                active = activeHandle == 0,
-                onDragStart = {
-                    activeHandle = 0
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    currentOnDragStateChange?.invoke(true)
-                },
-                onDragEnd = {
-                    activeHandle = null
-                    currentOnDragStateChange?.invoke(false)
-                },
-                onDrag = { dragAmount ->
-                    val newT = msOfContent(contentOfMs(currentStartMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
-                    currentOnStartHandleDrag(newT)
-                    // 注意 anchorScreenX 需在 zoom 被修改前求值，保证把手停留在手指原位置
-                    autoZoomForNarrowSelection(
-                        selStartMs = newT,
-                        selEndMs = currentEndMs,
-                        anchorMs = newT,
-                        anchorScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX
-                    )
-                    panViewportTo(
-                        contentX = contentOfMs(newT, stripWpx, zoom, durationMs),
-                        handleScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX,
-                        stripWpx = stripWpx,
-                        zoom = zoom,
-                        edgeMarginPx = edgeMarginPx
-                    ) { scrollX = it }
-                    currentOnSeekPreview?.invoke(newT)
-                }
-            )
-            // 右把手
-            ClipHandle(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .absoluteOffset { IntOffset((selRightScreen - handleTouchWpx / 2).roundToInt(), 0) }
-                    .width(handleTouchW),
-                visualWidth = handleW,
-                enabled = enabled,
-                active = activeHandle == 1,
-                onDragStart = {
-                    activeHandle = 1
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    currentOnDragStateChange?.invoke(true)
-                },
-                onDragEnd = {
-                    activeHandle = null
-                    currentOnDragStateChange?.invoke(false)
-                },
-                onDrag = { dragAmount ->
-                    val newT = msOfContent(contentOfMs(currentEndMs, stripWpx, zoom, durationMs) + dragAmount, stripWpx, zoom, durationMs)
-                    currentOnEndHandleDrag(newT)
-                    autoZoomForNarrowSelection(
-                        selStartMs = currentStartMs,
-                        selEndMs = newT,
-                        anchorMs = newT,
-                        anchorScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX
-                    )
-                    panViewportTo(
-                        contentX = contentOfMs(newT, stripWpx, zoom, durationMs),
-                        handleScreenX = contentOfMs(newT, stripWpx, zoom, durationMs) - scrollX,
-                        stripWpx = stripWpx,
-                        zoom = zoom,
-                        edgeMarginPx = edgeMarginPx
-                    ) { scrollX = it }
-                    currentOnSeekPreview?.invoke(newT)
-                }
-            )
-
-            // 缩放指示：显示当前视口跨度的视频时长（仅降级模式的手动缩放）
-            if (allowManualZoom && zoom > 1.01f) {
-                Text(
-                    "可视 " + formatClipTime((durationMs / zoom).roundToLong()),
-                    fontSize = 10.sp,
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(6.dp)
-                        .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(50))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-        }
-    }
-}
-
-/** 时间 → 内容像素（zoom 缩放后的时间轴宽度） */
-private fun contentOfMs(ms: Long, stripWpx: Float, zoom: Float, durationMs: Long): Float =
-    ms * stripWpx * zoom / durationMs.coerceAtLeast(1L)
-
-/** 内容像素 → 时间 */
-private fun msOfContent(px: Float, stripWpx: Float, zoom: Float, durationMs: Long): Long =
-    (px / (stripWpx * zoom) * durationMs).roundToLong().coerceIn(0L, durationMs)
-
-/** 拖把手到边缘时自动平移视口，保证长视频放大后也能继续拖 */
-private inline fun panViewportTo(
-    contentX: Float,
-    handleScreenX: Float,
-    stripWpx: Float,
-    zoom: Float,
-    edgeMarginPx: Float,
-    setScroll: (Float) -> Unit
-) {
-    val maxScroll = (stripWpx * zoom - stripWpx).coerceAtLeast(0f)
-    if (handleScreenX > stripWpx - edgeMarginPx) {
-        setScroll((contentX - (stripWpx - edgeMarginPx)).coerceIn(0f, maxScroll))
-    } else if (handleScreenX < edgeMarginPx) {
-        setScroll((contentX - edgeMarginPx).coerceIn(0f, maxScroll))
-    }
-}
-
-/** 解析手动输入的时间：支持纯秒数（"75" / "75.5"）与 "mm:ss"、"hh:mm:ss"，返回毫秒 */
-private fun parseClipTimeInput(raw: String): Long? {
-    val s = raw.trim()
-    if (s.isEmpty()) return null
-    return if (s.contains(':')) {
-        val nums = s.split(':').map { it.trim().toDoubleOrNull() ?: return null }
-        val seconds = when (nums.size) {
-            2 -> nums[0] * 60 + nums[1]
-            3 -> nums[0] * 3600 + nums[1] * 60 + nums[2]
-            else -> return null
-        }
-        if (seconds < 0) null else (seconds * 1000).roundToLong()
-    } else {
-        s.toDoubleOrNull()?.takeIf { it >= 0 }?.let { (it * 1000).roundToLong() }
-    }
-}
-
-/** 解析输入为秒（供输入弹窗使用） */
-private fun parseClipSeconds(raw: String): Double? =
-    parseClipTimeInput(raw)?.let { it / 1000.0 }
-
-/** 输入框展示用：秒（保留 1 位小数） */
-private fun secondsInputText(ms: Long): String =
-    String.format(Locale.US, "%.1f", ms / 1000.0)
-
-/**
- * 首帧/尾帧双图预览：上方两块画面分别对应剪辑的起点与终点，
- * 时间调整时实时刷新，帮助用户快速确认剪辑区间。
- */
-@Composable
-private fun ClipFramePreviews(vm: MainViewModel) {
-    // 起止时间变化（拖动/步进/点击）时自动请求对应帧
-    LaunchedEffect(vm.clipStartMs) { vm.requestClipFrame(isStart = true, timeMs = vm.clipStartMs) }
-    LaunchedEffect(vm.clipEndMs) { vm.requestClipFrame(isStart = false, timeMs = vm.clipEndMs) }
-
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ClipFrameCard(
-            modifier = Modifier.weight(1f),
-            label = "开始",
-            labelColor = iOSBlue,
-            timeMs = vm.clipStartMs,
-            frame = vm.clipStartFrame,
-            onClick = { vm.onClipFrameClicked(isStart = true) }
-        )
-        ClipFrameCard(
-            modifier = Modifier.weight(1f),
-            label = "结束",
-            labelColor = iOSGreen,
-            timeMs = vm.clipEndMs,
-            frame = vm.clipEndFrame,
-            onClick = { vm.onClipFrameClicked(isStart = false) }
-        )
-    }
-}
-
-/** 单张帧预览卡片：画面 + 左上角标签 + 底部时间遮罩，点击可保存到相册 */
-@Composable
-private fun ClipFrameCard(
-    modifier: Modifier = Modifier,
-    label: String,
-    labelColor: Color,
-    timeMs: Long,
-    frame: ImageBitmap?,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = modifier
-            .height(112.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MediaSurface)
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        if (frame != null) {
-            Image(
-                bitmap = frame,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            PulsingPlaceholder(modifier = Modifier.fillMaxSize())
-            CircularProgressIndicator(
-                color = iOSBlue,
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-
-        // 底部渐变遮罩，保证时间文字在任意画面上清晰
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(40.dp)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.62f))
-                    )
-                )
-        )
-        Text(
-            formatClipTime(timeMs),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 10.dp, bottom = 8.dp)
-        )
-        Text(
-            label,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(8.dp)
-                .background(labelColor.copy(alpha = 0.92f), RoundedCornerShape(50))
-                .padding(horizontal = 8.dp, vertical = 3.dp)
-        )
-    }
-}
-
-/** 缩略图未就绪时的呼吸占位动画 */
-@Composable
-private fun PulsingPlaceholder(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "thumbPulse")
-    val alpha by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 0.5f,
-        animationSpec = infiniteRepeatable(
-            tween(900, easing = LinearEasing),
-            RepeatMode.Reverse
-        ),
-        label = "thumbPulseAlpha"
-    )
-    Box(
-        modifier
-            .background(
-                Brush.linearGradient(
-                    listOf(Color(0xFF232329), Color(0xFF33333C), Color(0xFF232329))
-                )
-            )
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer { this.alpha = alpha }
-                .background(
-                    Brush.linearGradient(
-                        listOf(Color.Transparent, Color.White.copy(alpha = 0.35f), Color.Transparent)
-                    )
-                )
-        )
-    }
-}
-
-/** 时间轴把手：白色厚重圆角条 + 中央凹槽，拖拽时轻微放大 */
-@Composable
-private fun ClipHandle(
-    modifier: Modifier,
-    visualWidth: Dp,
-    enabled: Boolean,
-    active: Boolean,
-    onDragStart: () -> Unit,
-    onDragEnd: () -> Unit,
-    onDrag: (Float) -> Unit
-) {
-    val currentOnDragStart by rememberUpdatedState(onDragStart)
-    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
-    val currentOnDrag by rememberUpdatedState(onDrag)
-    val scale by animateFloatAsState(
-        if (active) 1.18f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "handleScale"
-    )
-    // 外层 Box 承担加宽的触摸区域；内层白色把手按 visualWidth 绘制，保持视觉纤细
-    Box(
-        modifier = modifier.then(
-            if (enabled) Modifier.pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = { currentOnDragStart() },
-                    onDragEnd = { currentOnDragEnd() },
-                    onDragCancel = { currentOnDragEnd() }
-                ) { change, dragAmount ->
-                    change.consume()
-                    currentOnDrag(dragAmount)
-                }
-            } else Modifier
-        ),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(visualWidth)
-                .shadow(
-                    elevation = if (active) 8.dp else 4.dp,
-                    shape = RoundedCornerShape(5.dp),
-                    ambientColor = Color.Black.copy(alpha = 0.4f),
-                    spotColor = Color.Black.copy(alpha = 0.4f)
-                )
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .clip(RoundedCornerShape(5.dp))
-                .background(Color.White),
-            contentAlignment = Alignment.Center
-        ) {
-            // 中央凹槽
-            Box(
-                Modifier
-                    .size(width = 2.dp, height = 20.dp)
-                    .background(Color(0xFF1C1C1E).copy(alpha = 0.4f), RoundedCornerShape(1.dp))
-            )
-        }
     }
 }
 
