@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,11 +36,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -1124,13 +1121,10 @@ private fun ClipEditor(vm: MainViewModel) {
 
 /**
  * 快速截取设置区（核心操作区）：
- * 开始时间（时 / 分 / 秒 三个输入框，默认 0）+ 快捷截取时长（20/60/120/自定义）+ 片段信息。
+ * 开始时间与截取时长均为 时 / 分 / 秒 三个输入框（默认留空）+ 片段信息。
  */
 @Composable
 private fun ClipQuickSettings(vm: MainViewModel) {
-    var showCustomInput by remember { mutableStateOf(false) }
-    val haptic = LocalHapticFeedback.current
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1153,34 +1147,30 @@ private fun ClipQuickSettings(vm: MainViewModel) {
         }
         Spacer(Modifier.height(10.dp))
 
-        // 时 / 分 / 秒 三个输入框，默认 0，输入即联动结束时间
-        ClipStartTimeFields(
-            startMs = vm.clipStartMs,
-            onStartChanged = vm::setClipStartKeepingDuration
+        // 时 / 分 / 秒 三个输入框，默认留空，输入即联动结束时间
+        ClipTimeFields(
+            valueMs = vm.clipStartMs,
+            onValueChanged = vm::setClipStartKeepingDuration,
+            hint = { entered ->
+                if (entered != vm.clipStartMs) {
+                    "超出视频范围，将从 ${formatClipTime(vm.clipStartMs)} 开始截取"
+                } else null
+            }
         )
         Spacer(Modifier.height(16.dp))
 
         Text("截取时长", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = iOSSecondary)
         Spacer(Modifier.height(9.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MainViewModel.CLIP_PRESET_SECONDS.forEach { sec ->
-                DurationChip(
-                    label = "${sec}秒",
-                    selected = !vm.clipCustomDuration && vm.clipPresetSec == sec
-                ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    vm.applyClipPreset(sec)
-                }
+        ClipTimeFields(
+            valueMs = (vm.clipEndMs - vm.clipStartMs).coerceAtLeast(0L),
+            onValueChanged = vm::setClipDurationKeepingStart,
+            hint = { entered ->
+                val actualMs = (vm.clipEndMs - vm.clipStartMs).coerceAtLeast(0L)
+                if (entered != actualMs) {
+                    "超出视频剩余时长，实际截取 ${formatClipTime(actualMs)}"
+                } else null
             }
-            DurationChip(label = "自定义", selected = vm.clipCustomDuration) {
-                showCustomInput = true
-            }
-        }
+        )
         Spacer(Modifier.height(16.dp))
 
         Box(Modifier.fillMaxWidth().height(1.dp).background(iOSSeparator))
@@ -1217,28 +1207,21 @@ private fun ClipQuickSettings(vm: MainViewModel) {
             }
         }
     }
-
-    if (showCustomInput) {
-        ClipCustomDurationDialog(
-            initialSeconds = vm.clipSelectedSeconds,
-            onApply = { sec -> vm.applyClipCustomDuration(sec) },
-            onDismiss = { showCustomInput = false }
-        )
-    }
 }
 
 /**
- * 开始时间输入：时 / 分 / 秒 三个独立输入框，默认 0。
- * 输入时按当前内容实时联动结束时间；失去焦点后回填实际生效的时间（超出视频范围会自动收敛）。
+ * 时 / 分 / 秒 三个独立输入框，默认留空（占位 0）。
+ * 输入时实时回调；失去焦点后回填实际生效的时间（超出范围会自动收敛）。
  */
 @Composable
-private fun ClipStartTimeFields(
-    startMs: Long,
-    onStartChanged: (Long) -> Unit
+private fun ClipTimeFields(
+    valueMs: Long,
+    onValueChanged: (Long) -> Unit,
+    hint: (enteredMs: Long) -> String? = { null }
 ) {
-    var hoursText by remember { mutableStateOf("0") }
-    var minutesText by remember { mutableStateOf("0") }
-    var secondsText by remember { mutableStateOf("0") }
+    var hoursText by remember { mutableStateOf("") }
+    var minutesText by remember { mutableStateOf("") }
+    var secondsText by remember { mutableStateOf("") }
     var hoursFocused by remember { mutableStateOf(false) }
     var minutesFocused by remember { mutableStateOf(false) }
     var secondsFocused by remember { mutableStateOf(false) }
@@ -1252,16 +1235,22 @@ private fun ClipStartTimeFields(
     }
 
     fun applyEntered() {
-        onStartChanged(enteredMs())
+        onValueChanged(enteredMs())
     }
 
     // 外部时间变化（首次探测/重置/超范围收敛）且当前没有输入焦点时，回填到输入框
-    LaunchedEffect(startMs, anyFocused) {
+    LaunchedEffect(valueMs, anyFocused) {
         if (!anyFocused) {
-            val totalSec = startMs.coerceAtLeast(0L) / 1000
-            hoursText = (totalSec / 3600).toString()
-            minutesText = ((totalSec % 3600) / 60).toString()
-            secondsText = (totalSec % 60).toString()
+            val totalSec = valueMs.coerceAtLeast(0L) / 1000
+            if (totalSec == 0L) {
+                hoursText = ""
+                minutesText = ""
+                secondsText = ""
+            } else {
+                hoursText = (totalSec / 3600).toString()
+                minutesText = ((totalSec % 3600) / 60).toString()
+                secondsText = (totalSec % 60).toString()
+            }
         }
     }
 
@@ -1304,10 +1293,11 @@ private fun ClipStartTimeFields(
         )
     }
 
-    if (anyFocused && enteredMs() != startMs) {
+    val warning = if (anyFocused) hint(enteredMs()) else null
+    if (warning != null) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "超出视频范围，将从 ${formatClipTime(startMs)} 开始截取",
+            warning,
             fontSize = 11.sp,
             color = Color(0xFFFF9500)
         )
@@ -1400,90 +1390,6 @@ private fun normalizeTimePart(raw: String, maxValue: Int, maxDigits: Int): Strin
     val digits = raw.filter { it.isDigit() }.take(maxDigits)
     if (digits.isEmpty()) return ""
     return digits.toInt().coerceAtMost(maxValue).toString()
-}
-
-/** 快捷时长药丸：选中态主色填充 + 柔和投影，未选中为浅底描边 */
-@Composable
-private fun DurationChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) iOSBlue else iOSBgBase)
-            .then(
-                if (selected) {
-                    Modifier.shadow(
-                        6.dp,
-                        RoundedCornerShape(50),
-                        ambientColor = iOSBlue.copy(alpha = 0.45f),
-                        spotColor = iOSBlue.copy(alpha = 0.45f)
-                    )
-                } else {
-                    Modifier.border(1.dp, iOSSeparator, RoundedCornerShape(50))
-                }
-            )
-            .clickable(interactionSource = null, indication = null, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 10.dp)
-    ) {
-        Text(
-            label,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (selected) Color.White else iOSLabel
-        )
-    }
-}
-
-/** 自定义截取时长输入弹窗：确认时才做合法性校验，输入过程中不重置内容 */
-@Composable
-private fun ClipCustomDurationDialog(
-    initialSeconds: Double,
-    onApply: (Double) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var text by remember { mutableStateOf(String.format(Locale.US, "%.1f", initialSeconds)) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    fun confirm() {
-        val value = text.trim().toDoubleOrNull()
-        if (value == null || value <= 0) {
-            error = "请输入有效的秒数"
-        } else {
-            onApply(value)
-            onDismiss()
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("自定义截取时长", fontWeight = FontWeight.SemiBold) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = {
-                        text = it
-                        error = null
-                    },
-                    singleLine = true,
-                    label = { Text("截取秒数") },
-                    placeholder = { Text("例如 12.5") },
-                    isError = error != null,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Decimal,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { confirm() }),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                error?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, fontSize = 12.sp, color = Color(0xFFFF3B30))
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { confirm() }) { Text("确定") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
 }
 
 /**

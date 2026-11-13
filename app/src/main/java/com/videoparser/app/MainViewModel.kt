@@ -14,7 +14,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
-import kotlin.math.roundToLong
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -43,12 +42,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var isClipping by mutableStateOf(false)
     var clipPhaseText by mutableStateOf("")
     var clipPercent by mutableIntStateOf(0)
-
-    /** 当前选中的快捷截取时长（秒）；0 表示自定义 */
-    var clipPresetSec by mutableIntStateOf(DEFAULT_CLIP_PRESET_SEC)
-
-    /** 时长是否处于自定义状态（输入自定义秒数后置位） */
-    var clipCustomDuration by mutableStateOf(false)
 
     /** 剪辑成功后的结果文件名；非空表示剪辑页展示完成状态 */
     var clipResultFileName by mutableStateOf<String?>(null)
@@ -262,8 +255,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clipDurationMs = 0L
         clipStartMs = 0L
         clipEndMs = 0L
-        clipPresetSec = DEFAULT_CLIP_PRESET_SEC
-        clipCustomDuration = false
         clipResultFileName = null
         isClipping = false
         clipPercent = 0
@@ -305,14 +296,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     is ClipProbe.Fallback -> probed.durationMs
                 }
                 if (clipDurationMs > 0) {
-                    // 默认快速截取：从视频开头起，选中默认时长（不足则截到视频末尾）
-                    clipPresetSec = DEFAULT_CLIP_PRESET_SEC
-                    clipCustomDuration = false
+                    // 开始时间与截取时长均由用户输入（输入框默认留空），内部先置零
                     clipStartMs = 0L
-                    clipEndMs = minOf(clipDurationMs, DEFAULT_CLIP_PRESET_SEC * 1000L)
-                    if (clipEndMs - clipStartMs < MIN_CLIP_SPAN_MS) {
-                        clipStartMs = (clipEndMs - MIN_CLIP_SPAN_MS).coerceAtLeast(0L)
-                    }
+                    clipEndMs = 0L
                 }
                 // 探测顺带拿到文件大小则回填，避免主界面大小一直空白
                 val probedSize = when (probed) {
@@ -328,31 +314,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 选中快捷截取时长：保持开始时间不变，按所选秒数重算结束时间。
-     * 超出视频末尾时截到末尾（此时实际时长小于所选时长，界面按实际时长展示）。
+     * 调整截取时长（时/分/秒输入）：保持开始时间不变，结束时间联动。
+     * 超出视频末尾时截到末尾，实际时长随之缩短；输入为空时时长为 0。
      */
-    fun applyClipPreset(seconds: Int) {
-        if (clipDurationMs <= 0 || seconds <= 0) return
-        clipPresetSec = seconds
-        clipCustomDuration = false
-        applySpanMs(seconds * 1000L)
-    }
-
-    /** 自定义截取时长（秒）：与快捷时长同样联动，但标记为自定义状态 */
-    fun applyClipCustomDuration(seconds: Double) {
-        if (clipDurationMs <= 0 || seconds <= 0) return
-        clipPresetSec = 0
-        clipCustomDuration = true
-        applySpanMs((seconds * 1000).roundToLong())
-    }
-
-    /** 保持开始时间，按给定跨度设置结束时间（钳制到视频范围并保证最小间隔） */
-    private fun applySpanMs(spanMs: Long) {
-        val span = spanMs.coerceAtLeast(MIN_CLIP_SPAN_MS)
-        clipEndMs = (clipStartMs + span).coerceAtMost(clipDurationMs)
-        if (clipEndMs - clipStartMs < MIN_CLIP_SPAN_MS) {
-            clipStartMs = (clipEndMs - MIN_CLIP_SPAN_MS).coerceAtLeast(0L)
+    fun setClipDurationKeepingStart(durationMs: Long) {
+        if (clipDurationMs <= 0) return
+        if (durationMs <= 0L) {
+            clipEndMs = clipStartMs
+            return
         }
+        clipEndMs = (clipStartMs + durationMs).coerceAtMost(clipDurationMs)
     }
 
     /**
@@ -363,13 +334,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (clipDurationMs <= 0) return
         // 视频本身不足 1 秒时，下限退化为视频时长，避免 coerceIn 区间非法
         val minSpan = minOf(MIN_CLIP_SPAN_MS, clipDurationMs)
-        val span = (clipEndMs - clipStartMs).coerceIn(minSpan, clipDurationMs)
+        val currentSpan = (clipEndMs - clipStartMs).coerceAtLeast(0L)
+        // 时长为空（0）时保持为空，不强行补足最小时长
+        val span = if (currentSpan == 0L) 0L else currentSpan.coerceIn(minSpan, clipDurationMs)
         val s = posMs.coerceIn(0L, (clipDurationMs - span).coerceAtLeast(0L))
         clipStartMs = s
         clipEndMs = (s + span).coerceAtMost(clipDurationMs)
-        if (clipEndMs - clipStartMs < minSpan) {
-            clipStartMs = (clipEndMs - minSpan).coerceAtLeast(0L)
-        }
     }
 
     /** 当前实际截取时长（秒） */
@@ -446,11 +416,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val MIN_CLIP_SPAN_MS = 1000L
-
-        /** 默认快捷截取时长（秒） */
-        const val DEFAULT_CLIP_PRESET_SEC = 20
-
-        /** 快捷截取时长选项（秒） */
-        val CLIP_PRESET_SECONDS = listOf(20, 60, 120)
     }
 }
